@@ -75,9 +75,15 @@ public final class GoBackend implements Backend {
 
     private static native int wgGetSocketV6(int handle);
 
+    private static native void wgSetVpnService(@Nullable VpnService service);
+
     private static native void wgTurnOff(int handle);
 
     private static native int wgTurnOn(String ifName, int tunFd, String settings);
+
+    public static native int wgTurnProxyStart(String peerAddr, String vklink, int n, boolean udp, String listenAddr);
+
+    public static native void wgTurnProxyStop();
 
     private static native String wgVersion();
 
@@ -388,11 +394,13 @@ public final class GoBackend implements Backend {
         @Override
         public void onCreate() {
             vpnService.complete(this);
+            wgSetVpnService(this);
             super.onCreate();
         }
 
         @Override
         public void onDestroy() {
+            wgSetVpnService(null);
             if (owner != null) {
                 final Tunnel tunnel = owner.currentTunnel;
                 if (tunnel != null) {

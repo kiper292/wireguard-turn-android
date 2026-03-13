@@ -11,6 +11,7 @@ import com.wireguard.android.BR
 import com.wireguard.android.backend.Statistics
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.android.databinding.Keyed
+import com.wireguard.android.turn.TurnSettings
 import com.wireguard.android.util.applicationScope
 import com.wireguard.config.Config
 import kotlinx.coroutines.Dispatchers
@@ -102,6 +103,21 @@ class ObservableTunnel internal constructor(
         this.config = config
         notifyPropertyChanged(BR.config)
         return config
+    }
+
+
+    @get:Bindable
+    var turnSettings: TurnSettings? = null
+        private set
+
+    suspend fun getTurnSettingsAsync(): TurnSettings? = withContext(Dispatchers.Main.immediate) {
+        turnSettings
+    }
+
+    fun onTurnSettingsChanged(settings: TurnSettings?): TurnSettings? {
+        this.turnSettings = settings
+        notifyPropertyChanged(BR.turnSettings)
+        return settings
     }
 
 

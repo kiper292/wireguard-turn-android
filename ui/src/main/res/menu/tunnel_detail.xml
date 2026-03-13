@@ -10,4 +10,9 @@
         android:icon="@drawable/ic_action_edit"
         android:title="@string/edit"
         app:showAsAction="always" />
+
+    <item
+        android:id="@+id/menu_action_turn_log"
+        android:title="@string/turn_log_menu"
+        app:showAsAction="never" />
 </menu>

@@ -260,4 +260,15 @@
     <string name="biometric_prompt_private_key_title">Authenticate to view private key</string>
     <string name="biometric_auth_error">Authentication failure</string>
     <string name="biometric_auth_error_reason">Authentication failure: %s</string>
+    <string name="turn_title">TURN</string>
+    <string name="turn_enable">Enable TURN proxy</string>
+    <string name="turn_peer">Peer (IP:Port)</string>
+    <string name="turn_vk_link">VK Calls link</string>
+    <string name="turn_streams">Streams (-n)</string>
+    <string name="turn_streams_hint">1-16 (default 4)</string>
+    <string name="turn_local_port">Local port</string>
+    <string name="turn_use_udp">Use UDP (-udp)</string>
+    <string name="turn_log_title">TURN log</string>
+    <string name="turn_log_clear">Clear log</string>
+    <string name="turn_log_menu">TURN log</string>
 </resources>

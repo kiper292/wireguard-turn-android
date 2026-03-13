@@ -10,6 +10,7 @@ import android.os.Parcelable
 import androidx.core.os.ParcelCompat
 import androidx.databinding.ObservableArrayList
 import androidx.databinding.ObservableList
+import com.wireguard.android.turn.TurnSettings
 import com.wireguard.config.BadConfigException
 import com.wireguard.config.Config
 import com.wireguard.config.Peer
@@ -17,6 +18,7 @@ import com.wireguard.config.Peer
 class ConfigProxy : Parcelable {
     val `interface`: InterfaceProxy
     val peers: ObservableList<PeerProxy> = ObservableArrayList()
+    val turn: TurnSettingsProxy
 
     private constructor(parcel: Parcel) {
         `interface` = ParcelCompat.readParcelable(parcel, InterfaceProxy::class.java.classLoader, InterfaceProxy::class.java) ?: InterfaceProxy()
@@ -25,20 +27,25 @@ class ConfigProxy : Parcelable {
         } else {
             parcel.readTypedList(peers, PeerProxy.CREATOR)
         }
+        turn = ParcelCompat.readParcelable(parcel, TurnSettingsProxy::class.java.classLoader, TurnSettingsProxy::class.java) ?: TurnSettingsProxy()
         peers.forEach { it.bind(this) }
     }
 
-    constructor(other: Config) {
+    constructor(other: Config, turnSettings: TurnSettings?) {
         `interface` = InterfaceProxy(other.getInterface())
         other.peers.forEach {
             val proxy = PeerProxy(it)
             peers.add(proxy)
             proxy.bind(this)
         }
+        turn = TurnSettingsProxy(turnSettings)
     }
+
+    constructor(other: Config) : this(other, null)
 
     constructor() {
         `interface` = InterfaceProxy()
+        turn = TurnSettingsProxy()
     }
 
     fun addPeer(): PeerProxy {
@@ -60,6 +67,11 @@ class ConfigProxy : Parcelable {
             .build()
     }
 
+    @Throws(BadConfigException::class)
+    fun resolveTurnSettings(): TurnSettings? {
+        return turn.resolve()
+    }
+
     override fun writeToParcel(dest: Parcel, flags: Int) {
         dest.writeParcelable(`interface`, flags)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -67,6 +79,7 @@ class ConfigProxy : Parcelable {
         } else {
             dest.writeTypedList(peers)
         }
+        dest.writeParcelable(turn, flags)
     }
 
     private class ConfigProxyCreator : Parcelable.Creator<ConfigProxy> {

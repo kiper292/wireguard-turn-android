@@ -28,6 +28,7 @@ import com.wireguard.android.R
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.android.databinding.TunnelEditorFragmentBinding
 import com.wireguard.android.model.ObservableTunnel
+import com.wireguard.android.turn.TurnSettings
 import com.wireguard.android.util.AdminKnobs
 import com.wireguard.android.util.BiometricAuthenticator
 import com.wireguard.android.util.ErrorMessages
@@ -44,7 +45,8 @@ class TunnelEditorFragment : BaseFragment(), MenuProvider {
     private var tunnel: ObservableTunnel? = null
 
     private fun onConfigLoaded(config: Config) {
-        binding?.config = ConfigProxy(config)
+        val currentTurn = tunnel?.turnSettings
+        binding?.config = ConfigProxy(config, currentTurn)
     }
 
     private fun onConfigSaved(savedTunnel: Tunnel, throwable: Throwable?) {
@@ -115,8 +117,15 @@ class TunnelEditorFragment : BaseFragment(), MenuProvider {
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
         if (menuItem.itemId == R.id.menu_action_save) {
             binding ?: return false
-            val newConfig = try {
-                binding!!.config!!.resolve()
+            val (newConfig, newTurnSettings) = try {
+                val configProxy = binding!!.config!!
+                val wgConfig = configProxy.resolve()
+                val turn = try {
+                    configProxy.resolveTurnSettings()
+                } catch (e: Throwable) {
+                    throw e
+                }
+                wgConfig to turn
             } catch (e: Throwable) {
                 val error = ErrorMessages[e]
                 val tunnelName = if (tunnel == null) binding!!.name else tunnel!!.name
@@ -132,7 +141,10 @@ class TunnelEditorFragment : BaseFragment(), MenuProvider {
                         Log.d(TAG, "Attempting to create new tunnel " + binding!!.name)
                         val manager = Application.getTunnelManager()
                         try {
-                            onTunnelCreated(manager.create(binding!!.name!!, newConfig), null)
+                            onTunnelCreated(
+                                manager.create(binding!!.name!!, newConfig, newTurnSettings),
+                                null,
+                            )
                         } catch (e: Throwable) {
                             onTunnelCreated(null, e)
                         }
@@ -143,6 +155,7 @@ class TunnelEditorFragment : BaseFragment(), MenuProvider {
                         try {
                             tunnel!!.setNameAsync(binding!!.name!!)
                             onTunnelRenamed(tunnel!!, newConfig, null)
+                            Application.getTunnelManager().setTunnelConfig(tunnel!!, newConfig, newTurnSettings)
                         } catch (e: Throwable) {
                             onTunnelRenamed(tunnel!!, newConfig, e)
                         }
@@ -151,7 +164,7 @@ class TunnelEditorFragment : BaseFragment(), MenuProvider {
                     else -> {
                         Log.d(TAG, "Attempting to save config of " + tunnel!!.name)
                         try {
-                            tunnel!!.setConfigAsync(newConfig)
+                            Application.getTunnelManager().setTunnelConfig(tunnel!!, newConfig, newTurnSettings)
                             onConfigSaved(tunnel!!, null)
                         } catch (e: Throwable) {
                             onConfigSaved(tunnel!!, e)

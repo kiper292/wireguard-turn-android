@@ -12,6 +12,8 @@ import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.view.MenuProvider
+import androidx.fragment.app.commit
+import androidx.fragment.app.FragmentTransaction
 import androidx.databinding.DataBindingUtil
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -33,7 +35,23 @@ class TunnelDetailFragment : BaseFragment(), MenuProvider {
     private var timerActive = true
 
     override fun onMenuItemSelected(menuItem: MenuItem): Boolean {
-        return false
+        return when (menuItem.itemId) {
+            R.id.menu_action_turn_log -> {
+                val activity = activity ?: return true
+                val containerId = if (activity.findViewById<View?>(R.id.detail_container) != null) {
+                    R.id.detail_container
+                } else {
+                    R.id.list_detail_container
+                }
+                activity.supportFragmentManager.commit {
+                    replace(containerId, TurnLogFragment())
+                    setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
+                    addToBackStack(null)
+                }
+                true
+            }
+            else -> false
+        }
     }
 
     override fun onCreateMenu(menu: Menu, menuInflater: MenuInflater) {

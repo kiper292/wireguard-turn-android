@@ -15,12 +15,15 @@ import androidx.databinding.Bindable
 import com.wireguard.android.Application.Companion.get
 import com.wireguard.android.Application.Companion.getBackend
 import com.wireguard.android.Application.Companion.getTunnelManager
+import com.wireguard.android.Application.Companion.getTurnProxyManager
 import com.wireguard.android.BR
 import com.wireguard.android.R
 import com.wireguard.android.backend.Statistics
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.android.configStore.ConfigStore
 import com.wireguard.android.databinding.ObservableSortedKeyedArrayList
+import com.wireguard.android.turn.TurnSettings
+import com.wireguard.android.turn.TurnSettingsStore
 import com.wireguard.android.util.ErrorMessages
 import com.wireguard.android.util.UserKnobs
 import com.wireguard.android.util.applicationScope
@@ -37,7 +40,10 @@ import kotlinx.coroutines.withContext
 /**
  * Maintains and mediates changes to the set of available WireGuard tunnels,
  */
-class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
+class TunnelManager(
+    private val configStore: ConfigStore,
+    private val turnSettingsStore: TurnSettingsStore,
+) : BaseObservable() {
     private val tunnels = CompletableDeferred<ObservableSortedKeyedArrayList<String, ObservableTunnel>>()
     private val context: Context = get()
     private val tunnelMap: ObservableSortedKeyedArrayList<String, ObservableTunnel> = ObservableSortedKeyedArrayList(TunnelComparator)
@@ -45,18 +51,25 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
 
     private fun addToList(name: String, config: Config?, state: Tunnel.State): ObservableTunnel {
         val tunnel = ObservableTunnel(this, name, config, state)
+        tunnel.onTurnSettingsChanged(turnSettingsStore.load(name))
         tunnelMap.add(tunnel)
         return tunnel
     }
 
     suspend fun getTunnels(): ObservableSortedKeyedArrayList<String, ObservableTunnel> = tunnels.await()
 
-    suspend fun create(name: String, config: Config?): ObservableTunnel = withContext(Dispatchers.Main.immediate) {
+    suspend fun create(
+        name: String,
+        config: Config?,
+        turnSettings: TurnSettings? = null,
+    ): ObservableTunnel = withContext(Dispatchers.Main.immediate) {
         if (Tunnel.isNameInvalid(name))
             throw IllegalArgumentException(context.getString(R.string.tunnel_error_invalid_name))
         if (tunnelMap.containsKey(name))
             throw IllegalArgumentException(context.getString(R.string.tunnel_error_already_exists, name))
-        addToList(name, withContext(Dispatchers.IO) { configStore.create(name, config!!) }, Tunnel.State.DOWN)
+        val savedConfig = withContext(Dispatchers.IO) { configStore.create(name, config!!) }
+        withContext(Dispatchers.IO) { turnSettingsStore.save(name, turnSettings) }
+        addToList(name, savedConfig, Tunnel.State.DOWN)
     }
 
     suspend fun delete(tunnel: ObservableTunnel) = withContext(Dispatchers.Main.immediate) {
@@ -70,7 +83,10 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
             if (originalState == Tunnel.State.UP)
                 withContext(Dispatchers.IO) { getBackend().setState(tunnel, Tunnel.State.DOWN, null) }
             try {
-                withContext(Dispatchers.IO) { configStore.delete(tunnel.name) }
+                withContext(Dispatchers.IO) {
+                    configStore.delete(tunnel.name)
+                    turnSettingsStore.delete(tunnel.name)
+                }
             } catch (e: Throwable) {
                 if (originalState == Tunnel.State.UP)
                     withContext(Dispatchers.IO) { getBackend().setState(tunnel, Tunnel.State.UP, tunnel.config) }
@@ -101,7 +117,10 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
     fun onCreate() {
         applicationScope.launch {
             try {
-                onTunnelsLoaded(withContext(Dispatchers.IO) { configStore.enumerate() }, withContext(Dispatchers.IO) { getBackend().runningTunnelNames })
+                onTunnelsLoaded(
+                    withContext(Dispatchers.IO) { configStore.enumerate() },
+                    withContext(Dispatchers.IO) { getBackend().runningTunnelNames },
+                )
             } catch (e: Throwable) {
                 Log.e(TAG, Log.getStackTraceString(e))
             }
@@ -152,11 +171,34 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
         UserKnobs.setRunningTunnels(tunnelMap.filter { it.state == Tunnel.State.UP }.map { it.name }.toSet())
     }
 
-    suspend fun setTunnelConfig(tunnel: ObservableTunnel, config: Config): Config = withContext(Dispatchers.Main.immediate) {
-        tunnel.onConfigChanged(withContext(Dispatchers.IO) {
-            getBackend().setState(tunnel, tunnel.state, config)
-            configStore.save(tunnel.name, config)
-        })!!
+    suspend fun setTunnelConfig(
+        tunnel: ObservableTunnel,
+        config: Config,
+        turnSettings: TurnSettings? = null,
+    ): Config = withContext(Dispatchers.Main.immediate) {
+        tunnel.onConfigChanged(
+            withContext(Dispatchers.IO) {
+                var configToUse = config
+                if (tunnel.state == Tunnel.State.UP) {
+                    val oldTurn = tunnel.turnSettings
+                    if (oldTurn != null && oldTurn.enabled) {
+                        getTurnProxyManager().stopForTunnel(tunnel.name)
+                    }
+                    if (turnSettings != null && turnSettings.enabled) {
+                        getTurnProxyManager().startForTunnel(tunnel.name, turnSettings)
+                        configToUse = modifyConfigForTurn(config, turnSettings.localPort)
+                    }
+                }
+                getBackend().setState(tunnel, tunnel.state, configToUse)
+                configStore.save(tunnel.name, config)
+            },
+        )!!
+            .also {
+                withContext(Dispatchers.IO) {
+                    turnSettingsStore.save(tunnel.name, turnSettings)
+                    tunnel.onTurnSettingsChanged(turnSettingsStore.load(tunnel.name))
+                }
+            }
     }
 
     suspend fun setTunnelName(tunnel: ObservableTunnel, name: String): String = withContext(Dispatchers.Main.immediate) {
@@ -176,7 +218,10 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
         try {
             if (originalState == Tunnel.State.UP)
                 withContext(Dispatchers.IO) { getBackend().setState(tunnel, Tunnel.State.DOWN, null) }
-            withContext(Dispatchers.IO) { configStore.rename(tunnel.name, name) }
+            withContext(Dispatchers.IO) {
+                configStore.rename(tunnel.name, name)
+                turnSettingsStore.rename(tunnel.name, name)
+            }
             newName = tunnel.onNameChanged(name)
             if (originalState == Tunnel.State.UP)
                 withContext(Dispatchers.IO) { getBackend().setState(tunnel, Tunnel.State.UP, tunnel.config) }
@@ -198,7 +243,24 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
         var newState = tunnel.state
         var throwable: Throwable? = null
         try {
-            newState = withContext(Dispatchers.IO) { getBackend().setState(tunnel, state, tunnel.getConfigAsync()) }
+            var configToUse = tunnel.getConfigAsync()
+            if (state == Tunnel.State.UP) {
+                val turn = tunnel.turnSettings
+                if (turn != null && turn.enabled) {
+                    withContext(Dispatchers.IO) {
+                        getTurnProxyManager().startForTunnel(tunnel.name, turn)
+                    }
+                    configToUse = modifyConfigForTurn(configToUse, turn.localPort)
+                }
+            } else if (state == Tunnel.State.DOWN) {
+                val turn = tunnel.turnSettings
+                if (turn != null && turn.enabled) {
+                    withContext(Dispatchers.IO) {
+                        getTurnProxyManager().stopForTunnel(tunnel.name)
+                    }
+                }
+            }
+            newState = withContext(Dispatchers.IO) { getBackend().setState(tunnel, state, configToUse) }
             if (newState == Tunnel.State.UP)
                 lastUsedTunnel = tunnel
         } catch (e: Throwable) {
@@ -209,6 +271,22 @@ class TunnelManager(private val configStore: ConfigStore) : BaseObservable() {
         if (throwable != null)
             throw throwable
         newState
+    }
+
+    private fun modifyConfigForTurn(config: Config, localPort: Int): Config {
+        val builder = Config.Builder()
+        builder.setInterface(config.`interface`)
+        for (peer in config.peers) {
+            val peerBuilder = Peer.Builder()
+            peerBuilder.addAllowedIps(peer.allowedIps)
+            peerBuilder.setPublicKey(peer.publicKey)
+            peer.preSharedKey.ifPresent { peerBuilder.setPreSharedKey(it) }
+            peer.persistentKeepalive.ifPresent { peerBuilder.setPersistentKeepalive(it.toInt()) }
+            // Replace endpoint with 127.0.0.1:localPort
+            peerBuilder.parseEndpoint("127.0.0.1:$localPort")
+            builder.addPeer(peerBuilder.build())
+        }
+        return builder.build()
     }
 
     class IntentReceiver : BroadcastReceiver() {

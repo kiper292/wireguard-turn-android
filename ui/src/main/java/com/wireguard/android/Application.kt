@@ -22,6 +22,8 @@ import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.WgQuickBackend
 import com.wireguard.android.configStore.FileConfigStore
 import com.wireguard.android.model.TunnelManager
+import com.wireguard.android.turn.TurnProxyManager
+import com.wireguard.android.turn.TurnSettingsStore
 import com.wireguard.android.updater.Updater
 import com.wireguard.android.util.RootShell
 import com.wireguard.android.util.ToolsInstaller
@@ -48,6 +50,7 @@ class Application : android.app.Application() {
     private lateinit var preferencesDataStore: DataStore<Preferences>
     private lateinit var toolsInstaller: ToolsInstaller
     private lateinit var tunnelManager: TunnelManager
+    private lateinit var turnProxyManager: TurnProxyManager
 
     override fun attachBaseContext(context: Context) {
         super.attachBaseContext(context)
@@ -106,7 +109,11 @@ class Application : android.app.Application() {
         } else {
             AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
         }
-        tunnelManager = TunnelManager(FileConfigStore(applicationContext))
+        tunnelManager = TunnelManager(
+            FileConfigStore(applicationContext),
+            TurnSettingsStore(applicationContext),
+        )
+        turnProxyManager = TurnProxyManager(applicationContext)
         tunnelManager.onCreate()
         coroutineScope.launch(Dispatchers.IO) {
             try {
@@ -147,6 +154,8 @@ class Application : android.app.Application() {
         fun getToolsInstaller() = get().toolsInstaller
 
         fun getTunnelManager() = get().tunnelManager
+
+        fun getTurnProxyManager() = get().turnProxyManager
 
         fun getCoroutineScope() = get().coroutineScope
     }

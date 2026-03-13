@@ -26,12 +26,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/cbeuw/connutil"
-	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
-	"github.com/pion/dtls/v3"
 	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
 	"github.com/pion/logging"
 	"github.com/pion/turn/v5"

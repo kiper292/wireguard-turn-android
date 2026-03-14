@@ -12,7 +12,7 @@ data class TurnSettings(
     val peer: String = "",
     val vkLink: String = "",
     val streams: Int = 4,
-    val useUdp: Boolean = true,
+    val useUdp: Boolean = false,
     val localPort: Int = 9000,
 ) {
     companion object {

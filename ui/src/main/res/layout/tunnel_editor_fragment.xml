@@ -303,6 +303,8 @@
                             android:layout_height="wrap_content"
                             android:layout_margin="4dp"
                             android:hint="@string/turn_peer"
+                            android:enabled="@{config.turn.enabled}"
+                            app:expandedHintEnabled="false"
                             app:layout_constraintStart_toStartOf="parent"
                             app:layout_constraintTop_toBottomOf="@id/turn_title"
                             app:layout_constraintEnd_toEndOf="parent">
@@ -314,6 +316,7 @@
                                 android:enabled="@{config.turn.enabled}"
                                 android:imeOptions="actionNext"
                                 android:inputType="textNoSuggestions|textVisiblePassword"
+                                android:hint="@string/turn_peer_hint"
                                 android:text="@={config.turn.peer}" />
                         </com.google.android.material.textfield.TextInputLayout>
 
@@ -323,6 +326,8 @@
                             android:layout_height="wrap_content"
                             android:layout_margin="4dp"
                             android:hint="@string/turn_vk_link"
+                            android:enabled="@{config.turn.enabled}"
+                            app:expandedHintEnabled="false"
                             app:layout_constraintStart_toStartOf="parent"
                             app:layout_constraintTop_toBottomOf="@id/turn_peer_layout"
                             app:layout_constraintEnd_toEndOf="parent">
@@ -334,6 +339,7 @@
                                 android:enabled="@{config.turn.enabled}"
                                 android:imeOptions="actionNext"
                                 android:inputType="textNoSuggestions|textVisiblePassword"
+                                android:hint="@string/turn_vk_link_hint"
                                 android:text="@={config.turn.vkLink}" />
                         </com.google.android.material.textfield.TextInputLayout>
 
@@ -343,6 +349,8 @@
                             android:layout_height="wrap_content"
                             android:layout_margin="4dp"
                             android:hint="@string/turn_streams"
+                            android:enabled="@{config.turn.enabled}"
+                            app:expandedHintEnabled="false"
                             app:layout_constraintStart_toStartOf="parent"
                             app:layout_constraintTop_toBottomOf="@id/turn_vk_link_layout"
                             app:layout_constraintEnd_toStartOf="@id/turn_local_port_layout"
@@ -365,6 +373,8 @@
                             android:layout_height="wrap_content"
                             android:layout_margin="4dp"
                             android:hint="@string/turn_local_port"
+                            android:enabled="@{config.turn.enabled}"
+                            app:expandedHintEnabled="false"
                             app:layout_constraintStart_toEndOf="@id/turn_streams_layout"
                             app:layout_constraintTop_toBottomOf="@id/turn_vk_link_layout"
                             app:layout_constraintEnd_toEndOf="parent"
@@ -375,9 +385,9 @@
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:enabled="@{config.turn.enabled}"
-                                android:hint="9000"
                                 android:imeOptions="actionNext"
                                 android:inputType="number"
+                                android:hint="@string/turn_local_port_hint"
                                 android:text="@={config.turn.localPort}" />
                         </com.google.android.material.textfield.TextInputLayout>
 

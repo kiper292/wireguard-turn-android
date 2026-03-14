@@ -35,7 +35,7 @@ class TurnSettingsStore(private val context: Context) {
                     peer = json.optString("peer", ""),
                     vkLink = json.optString("vkLink", ""),
                     streams = json.optInt("streams", 4),
-                    useUdp = json.optBoolean("useUdp", true),
+                    useUdp = json.optBoolean("useUdp", false),
                     localPort = json.optInt("localPort", 9000),
                 )
             }

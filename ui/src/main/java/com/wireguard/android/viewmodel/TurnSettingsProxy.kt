@@ -42,7 +42,7 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
         }
 
     @get:Bindable
-    var useUdp: Boolean = true
+    var useUdp: Boolean = false
         set(value) {
             field = value
             notifyPropertyChanged(BR.useUdp)
@@ -94,8 +94,7 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
             return null
         }
 
-        val parsedStreams = streams.toIntOrNull()
-            ?: throw BadConfigException(BadConfigException.Section.INTERFACE, BadConfigException.Location.TOP_LEVEL, BadConfigException.Reason.INVALID_VALUE, streams)
+        val parsedStreams = streams.toIntOrNull() ?: 4
         if (parsedStreams !in 1..16) {
             throw BadConfigException(BadConfigException.Section.INTERFACE, BadConfigException.Location.TOP_LEVEL, BadConfigException.Reason.INVALID_VALUE, streams)
         }

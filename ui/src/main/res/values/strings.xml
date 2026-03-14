@@ -262,10 +262,13 @@
     <string name="biometric_auth_error_reason">Authentication failure: %s</string>
     <string name="turn_title">TURN</string>
     <string name="turn_enable">Enable TURN proxy</string>
-    <string name="turn_peer">Peer (IP:Port)</string>
+    <string name="turn_peer">Peer</string>
+    <string name="turn_peer_hint">IP:Port</string>
     <string name="turn_vk_link">VK Calls link</string>
+    <string name="turn_vk_link_hint">https://vk.ru/call/join/...</string>
     <string name="turn_streams">Streams (-n)</string>
     <string name="turn_streams_hint">1-16 (default 4)</string>
     <string name="turn_local_port">Local port</string>
+    <string name="turn_local_port_hint">1024-65535 (default 9000)</string>
     <string name="turn_use_udp">Use UDP (-udp)</string>
 </resources>

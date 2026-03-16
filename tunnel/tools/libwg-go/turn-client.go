@@ -265,10 +265,7 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 					n, err := dtlsConn.Read(buf)
 					if err != nil { return }
 					if last := s.peer.Load(); last != nil {
-						// turnLog("[STREAM %d] DTLS -> WG App (%d bytes) to %s", s.id, n, (*last).String())
 						s.out.WriteTo(buf[:n], *last)
-					} else {
-						turnLog("[STREAM %d] DROP response: no WG App address yet", s.id)
 					}
 				}
 			}()
@@ -325,8 +322,8 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, n int, udp int, listen
 			if err != nil { return }
 			
 			s := activeStream.Load()
+			// Only switch if current is nil or not ready
 			if s == nil || !s.ready.Load() {
-				// Find first available ready stream
 				s = nil
 				for _, st := range streams {
 					if st.ready.Load() {
@@ -338,12 +335,8 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, n int, udp int, listen
 				}
 			}
 
-			if s == nil {
-				// No streams ready yet, drop packet
-				continue
-			}
+			if s == nil { continue }
 
-			// Store return address (correctly, by value copy)
 			returnAddr := addr
 			s.peer.Store(&returnAddr)
 

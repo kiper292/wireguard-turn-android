@@ -1,6 +1,6 @@
 # WireGuard Android with VK TURN Proxy
 
-This is a specialized fork of the official [WireGuard Android](https://git.zx2c4.com/wireguard-android) client with integrated support for **VK TURN Proxy**. 
+This is a specialized fork of the official [WireGuard Android](https://git.zx2c4.com/wireguard-android) client with integrated support for **VK TURN Proxy**.
 
 It allows WireGuard traffic to be encapsulated within DTLS/TURN streams using the VK Calls infrastructure, providing a robust way to bypass network restrictions while maintaining high performance and stability.
 
@@ -16,8 +16,10 @@ Unauthorized use of the VK Calls infrastructure (TURN servers) without explicit 
 - **VK Authentication**: Automated retrieval of TURN credentials via VK Calls anonymous tokens.
 - **Multi-Stream Load Balancing**: High performance and reliability with parallel DTLS streams, Session ID aggregation, and round-robin outbound balancing.
 - **MTU Optimization**: Automatic MTU adjustment to 1280 when using TURN to ensure encapsulated packets fit standard network limits.
-- **Seamless Configuration**: TURN settings are stored directly inside standard WireGuard `.conf` files as special metadata comments (`#@wgt:`).
+- **Auto-Reconnect on Network Change**: Automatic TURN restart when switching between WiFi and 4G/5G with debounce protection.
+- **Fast Network Recovery**: DNS and HTTP connection reset on network change for quick reconnection.
 - **VpnService Protection**: All proxy traffic is automatically protected from being looped back into the VPN tunnel.
+- **Seamless Configuration**: TURN settings are stored directly inside standard WireGuard `.conf` files as special metadata comments (`#@wgt:`).
 
 ## Technical Credits
 
@@ -30,6 +32,7 @@ This project is built upon the foundations laid by:
 ## Building
 
 ```bash
+# Requires Go 1.25+ and Android NDK 29
 $ git clone --recurse-submodules https://github.com/your-repo/wireguard-turn-android
 $ cd wireguard-turn-android
 $ ./gradlew assembleRelease
@@ -56,12 +59,24 @@ AllowedIPs = 0.0.0.0/0
 
 For more technical details, see [info/TURN_INTEGRATION_DETAILS.md](info/TURN_INTEGRATION_DETAILS.md).
 
-## Donations / Поддержать разработчика
-Are welcome here :
+## Donations
 
-* **BTC:** `1KxW8gGEv27YR1ckygrLoEftb89eqFtwgt`
-* **TON / USDT TON:** `UQBPqDx7s_mKBEp7kGRGok_qpEehI2yYUUw1djwyofaKVX3o`
-* **USDT TRC20:** `TAN2vABggLn9FN4PoRGWjfQVFmgZxxZWYp`
+Are welcome here:
+
+![image](https://github.com/user-attachments/assets/13f67691-9c4f-463b-a0e6-5fcc9c9bae84) BTC:
+```plaintext
+1KxW8gGEv27YR1ckygrLoEftb89eqFtwgt
+```
+
+![image](https://github.com/user-attachments/assets/49749ce5-1296-46dd-8f55-16f874b3e887) TON / USDT TON:
+```plaintext
+UQBPqDx7s_mKBEp7kGRGok_qpEehI2yYUUw1djwyofaKVX3o
+```
+
+![image](https://github.com/user-attachments/assets/3e23f917-327e-42a6-b4e0-c1def9a42785) USDT TRC20:
+```plaintext
+TAN2vABggLn9FN4PoRGWjfQVFmgZxxZWYp
+```
 
 ## Contributing
 

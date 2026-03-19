@@ -8,7 +8,7 @@
 
 ## Важное предупреждение
 
-**Данный проект создан исключительно в учебных и исследовательских целях.** 
+**Данный проект создан исключительно в учебных и исследовательских целях.**
 
 Использование инфраструктуры VK Calls (TURN-серверов) без явного разрешения со стороны правообладателя может нарушать Условия использования сервиса и правила платформы VK. Автор проекта не несет ответственности за любой ущерб или нарушение правил, возникшее в результате использования данного программного обеспечения. Проект демонстрирует техническую возможность интеграции протоколов и не предназначен для нецелевого использования ресурсов сторонних сервисов.
 
@@ -18,20 +18,23 @@
 - **Авторизация VK**: Автоматическое получение учетных данных TURN через анонимные токены VK Calls.
 - **Многопоточная балансировка**: Высокая производительность и надежность за счет параллельных потоков DTLS, агрегации по Session ID и Round-Robin балансировки исходящего трафика.
 - **Оптимизация MTU**: Автоматическая установка MTU в 1280 при использовании TURN для стабильной работы инкапсулированных пакетов.
-- **Удобная настройка**: Параметры TURN хранятся прямо в стандартных `.conf` файлах WireGuard в виде специальных комментариев-метаданных (`#@wgt:`).
+- **Автоматический рестарт при смене сети**: TURN автоматически переподключается при переключении между WiFi и 4G/5G с защитой от частых перезапусков (debounce).
+- **Быстрое восстановление сети**: Сброс DNS и HTTP-соединений при смене сети для ускоренного переподключения.
 - **Защита VpnService**: Весь трафик прокси автоматически защищен от попадания в VPN-петлю.
+- **Удобная настройка**: Параметры TURN хранятся прямо в стандартных `.conf` файлах WireGuard в виде специальных комментариев-метаданных (`#@wgt:`).
 
 ## Благодарности
 
 Этот проект построен на базе:
 1. **[Official WireGuard Android](https://git.zx2c4.com/wireguard-android)** — основное приложение VPN и пользовательский интерфейс.
-2. **[vk-turn-proxy](https://github.com/kiper292/vk-turn-proxy)** — серверная часть прокси (v2), необходимая для работы данного клиента. 
+2. **[vk-turn-proxy](https://github.com/kiper292/vk-turn-proxy)** — серверная часть прокси (v2), необходимая для работы данного клиента.
 
 > **Важно**: Для корректной работы этого клиента (агрегация потоков по Session ID) необходимо использовать серверную часть из форка [kiper292/vk-turn-proxy](https://github.com/kiper292/vk-turn-proxy).
 
 ## Сборка
 
 ```bash
+# Требуется Go 1.25+ и Android NDK 29
 $ git clone --recurse-submodules https://github.com/your-repo/wireguard-turn-android
 $ cd wireguard-turn-android
 $ ./gradlew assembleRelease
@@ -59,19 +62,20 @@ AllowedIPs = 0.0.0.0/0
 Для получения подробной технической информации см. [info/TURN_INTEGRATION_DETAILS.md](info/TURN_INTEGRATION_DETAILS.md).
 
 ## Donations / Поддержать разработчика
-Are welcome here :
+
+Are welcome here:
 
 ![image](https://github.com/user-attachments/assets/13f67691-9c4f-463b-a0e6-5fcc9c9bae84) BTC:
 ```plaintext
 1KxW8gGEv27YR1ckygrLoEftb89eqFtwgt
 ```
 
-![image](https://github.com/user-attachments/assets/49749ce5-1296-46dd-8f55-16f874b3e887) TON / USDT TON: 
+![image](https://github.com/user-attachments/assets/49749ce5-1296-46dd-8f55-16f874b3e887) TON / USDT TON:
 ```plaintext
 UQBPqDx7s_mKBEp7kGRGok_qpEehI2yYUUw1djwyofaKVX3o
 ```
 
-![image](https://github.com/user-attachments/assets/3e23f917-327e-42a6-b4e0-c1def9a42785) USDT TRC20: 
+![image](https://github.com/user-attachments/assets/3e23f917-327e-42a6-b4e0-c1def9a42785) USDT TRC20:
 ```plaintext
 TAN2vABggLn9FN4PoRGWjfQVFmgZxxZWYp
 ```

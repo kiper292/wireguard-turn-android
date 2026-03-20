@@ -26,23 +26,23 @@ public final class TurnBackend {
      */
     public static void onVpnServiceCreated(@Nullable VpnService service) {
         Log.d("WireGuard/TurnBackend", "onVpnServiceCreated called with service=" + (service != null ? "non-null" : "null"));
-        
+
         if (service != null) {
             // First, set the service in JNI so sockets can be protected
             wgSetVpnService(service);
-            
-            // Get the current future and complete it
-            CompletableFuture<VpnService> currentFuture = vpnServiceFutureRef.get();
+
+            // Atomically get old future and create new one
+            CompletableFuture<VpnService> currentFuture = vpnServiceFutureRef.getAndSet(new CompletableFuture<>());
             if (!currentFuture.isDone()) {
                 currentFuture.complete(service);
                 Log.d("WireGuard/TurnBackend", "VpnService future completed");
             } else {
-                // Future was already completed (e.g., from previous cycle)
-                // Create a new one and complete it
-                Log.d("WireGuard/TurnBackend", "VpnService future was already completed, creating new one");
-                CompletableFuture<VpnService> newFuture = new CompletableFuture<>();
-                vpnServiceFutureRef.set(newFuture);
-                newFuture.complete(service);
+                // Old future already completed — complete the new one
+                CompletableFuture<VpnService> newFuture = vpnServiceFutureRef.get();
+                if (!newFuture.isDone()) {
+                    newFuture.complete(service);
+                    Log.d("WireGuard/TurnBackend", "VpnService future completed (replacement)");
+                }
             }
         } else {
             // Service destroyed - reset the future for next cycle

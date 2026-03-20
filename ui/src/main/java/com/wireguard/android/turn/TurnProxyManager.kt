@@ -37,41 +37,107 @@ class TurnProxyManager(private val context: Context) {
     @Volatile private var userInitiatedStop: Boolean = false
     private val networkChangeLock = AtomicBoolean(false)
     private var restartFailureCount: Int = 0
+    
+    // Fields for network event filtering (Android 14 fix)
+    @Volatile private var lastTransportType: Int? = null
+    @Volatile private var lastRestartTime: Long = 0
 
     init {
         val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val request = NetworkRequest.Builder().build()
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+            .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
+            .build()
         connectivityManager.registerNetworkCallback(request, object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 super.onAvailable(network)
-                Log.d(TAG, "Network available")
-                TurnBackend.wgNotifyNetworkChange()
+                Log.d(TAG, "Network available (no action - waiting for capabilities)")
+                // Do NOT call wgNotifyNetworkChange() — this may be an additional network
             }
             override fun onLost(network: Network) {
                 super.onLost(network)
-                Log.d(TAG, "Network lost")
-                TurnBackend.wgNotifyNetworkChange()
+                Log.d(TAG, "Network lost (no action - waiting for capabilities)")
+                // Do NOT call wgNotifyNetworkChange() — this may be a temporary loss
             }
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
                 super.onCapabilitiesChanged(network, capabilities)
-                if (!networkChangeLock.compareAndSet(false, true)) return
+                
+                // Ignore networks without internet
+                if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                    Log.d(TAG, "Skipping network without INTERNET capability")
+                    return
+                }
+                
+                // Ignore non-default networks (MMS, IMS, VPN)
+                // NET_CAPABILITY_NOT_DEFAULT = 23 (available since API 29)
+                // Use numeric value for compatibility with API 24+
+                val NOT_DEFAULT_CAPABILITY = 23
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    if (capabilities.hasCapability(NOT_DEFAULT_CAPABILITY)) {
+                        Log.d(TAG, "Skipping NOT_DEFAULT network")
+                        return
+                    }
+                }
+                
+                // Determine current transport type
+                val currentTransportType = when {
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkCapabilities.TRANSPORT_WIFI
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkCapabilities.TRANSPORT_CELLULAR
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> NetworkCapabilities.TRANSPORT_ETHERNET
+                    else -> {
+                        Log.d(TAG, "Skipping unknown transport type")
+                        return
+                    }
+                }
+                
+                // Compare with previous state
+                val lastType = lastTransportType
+                if (lastType != null && lastType == currentTransportType) {
+                    Log.d(TAG, "Skipping: same transport type (${transportName(currentTransportType)})")
+                    networkChangeLock.set(false)
+                    return  // Do not restart on minor changes within same transport
+                }
+                
+                // Check lock
+                if (!networkChangeLock.compareAndSet(false, true)) {
+                    Log.d(TAG, "Skipping: network change lock is held")
+                    return
+                }
                 if (userInitiatedStop || activeTunnelName == null) {
+                    Log.d(TAG, "Skipping: user initiated stop or no active tunnel")
                     networkChangeLock.set(false)
                     return
                 }
-
-                Log.d(TAG, "Network change detected, restarting TURN for $activeTunnelName")
+                
+                // Save current type
+                lastTransportType = currentTransportType
+                
+                // Check restart frequency (10 seconds debounce)
+                val now = System.currentTimeMillis()
+                if (now - lastRestartTime < 10000) {
+                    Log.w(TAG, "Skipping restart: too soon (${now - lastRestartTime}ms)")
+                    networkChangeLock.set(false)
+                    return
+                }
+                lastRestartTime = now
+                
+                Log.d(TAG, "Network change detected: transport=${transportName(currentTransportType)}, restarting TURN for $activeTunnelName")
                 scope.launch {
                     try {
                         Log.d(TAG, "Stopping TURN proxy...")
                         TurnBackend.wgTurnProxyStop()
                         delay(1000)
-                        Log.d(TAG, "Notifying Go layer...")
+                        
+                        // Call wgNotifyNetworkChange() to reset DNS/HTTP in Go layer
+                        Log.d(TAG, "Notifying Go layer of network change...")
                         TurnBackend.wgNotifyNetworkChange()
-
+                        delay(500)
+                        
                         val name = activeTunnelName ?: return@launch
                         val settings = activeSettings ?: return@launch
-
+                        
                         Log.d(TAG, "Starting TURN for $name")
                         val success = startForTunnel(name, settings)
                         if (success) {
@@ -158,6 +224,8 @@ class TurnProxyManager(private val context: Context) {
             userInitiatedStop = true
             activeTunnelName = null
             activeSettings = null
+            lastTransportType = null  // Reset for next launch
+            lastRestartTime = 0
             val instance = instances[tunnelName] ?: return@withContext
             TurnBackend.wgTurnProxyStop()
             instance.running = false
@@ -191,5 +259,12 @@ class TurnProxyManager(private val context: Context) {
     companion object {
         private const val TAG = "WireGuard/TurnProxyManager"
         private const val MAX_LOG_CHARS = 128 * 1024
+        
+        private fun transportName(type: Int): String = when (type) {
+            NetworkCapabilities.TRANSPORT_WIFI -> "WiFi"
+            NetworkCapabilities.TRANSPORT_CELLULAR -> "Cellular"
+            NetworkCapabilities.TRANSPORT_ETHERNET -> "Ethernet"
+            else -> "Unknown"
+        }
     }
 }

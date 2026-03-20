@@ -55,7 +55,14 @@ AllowedIPs = 0.0.0.0/0
 #@wgt:VKLink = https://vk.com/call/join/...
 #@wgt:StreamNum = 4
 #@wgt:LocalPort = 9000
+
+# Advanced settings (optional)
+#@wgt:TurnIP = 155.212.199.166      # Override TURN server IP
+#@wgt:TurnPort = 19302              # Override TURN server port
+#@wgt:NoDTLS = false                # Disable DTLS (for direct WireGuard server access)
 ```
+
+**Note:** `NoDTLS = true` mode is intended for debugging or direct connection to WireGuard server via TURN. It is incompatible with the proxy server which requires DTLS handshake.
 
 For more technical details, see [info/TURN_INTEGRATION_DETAILS.md](info/TURN_INTEGRATION_DETAILS.md).
 

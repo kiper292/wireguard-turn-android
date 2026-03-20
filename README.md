@@ -57,7 +57,14 @@ AllowedIPs = 0.0.0.0/0
 #@wgt:VKLink = https://vk.com/call/join/...
 #@wgt:StreamNum = 4
 #@wgt:LocalPort = 9000
+
+# Advanced settings (optional)
+#@wgt:TurnIP = 155.212.199.166      # Переопределить IP TURN сервера
+#@wgt:TurnPort = 19302              # Переопределить порт TURN сервера
+#@wgt:NoDTLS = false                # Отключить DTLS (для прямого доступа к серверу WireGuard)
 ```
+
+**Примечание:** Режим `NoDTLS = true` предназначен для отладки или прямого подключения к WireGuard серверу через TURN. Он несовместим с прокси-сервером, который требует DTLS handshake.
 
 Для получения подробной технической информации см. [info/TURN_INTEGRATION_DETAILS.md](info/TURN_INTEGRATION_DETAILS.md).
 

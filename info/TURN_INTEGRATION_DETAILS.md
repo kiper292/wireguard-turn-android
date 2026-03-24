@@ -7,10 +7,21 @@
 ### `tunnel/tools/libwg-go/jni.c`
 
 - **`wgProtectSocket(int fd)`**: Функция для вызова `VpnService.protect(fd)` через JNI. Позволяет TURN-клиенту выводить трафик за пределы VPN-туннеля.
+  - Валидация fd (возвращает -1 при невалидном fd)
+  - Логирование результата (SUCCESS/FAILED)
+  - **bindSocket()** — привязка сокета к кэшированному Network object для маршрутизации через правильный интерфейс
+
 - **`wgTurnProxyStart/Stop`**: Экспортированные методы для управления жизненным циклом прокси-сервера.
+  - Принимает `networkHandle` (long long) для привязки к конкретному Network
+  - Вызывает `update_current_network()` для кэширования Network object
+
 - **`wgNotifyNetworkChange()`**: Функция для сброса DNS resolver и HTTP-соединений при переключении сети (WiFi <-> 4G). Обеспечивает быстрое восстановление соединения после смены сетевого интерфейса.
-- **Стабилизация ABI**: Использование простых C-типов (`const char *`, `int`) для передачи параметров прокси, что устраняет ошибки выравнивания памяти в Go-структурах на разных архитектурах. Параметр `udp` изменён с `boolean` на `int` для корректной работы JNI.
-- **Детальное логирование**: `wgProtectSocket()` логирует валидацию fd, вызов protect() и результат (SUCCESS/FAILED).
+
+- **`update_current_network()`**: Внутренняя функция для кэширования Network object и NetworkHandle. Используется для `bindSocket()` при защите сокетов.
+
+- **Стабилизация ABI**: Использование простых C-типов (`const char *`, `int`, `long long`) для передачи параметров прокси, что устраняет ошибки выравнивания памяти в Go-структурах на разных архитектурах. Параметр `udp` имеет тип `int` для корректной работы JNI.
+
+- **Детальное логирование**: `wgProtectSocket()` логирует валидацию fd, вызов protect() и результат (SUCCESS/FAILED), а также результат bindSocket().
 
 ### `tunnel/tools/libwg-go/turn-client.go`
 
@@ -24,6 +35,10 @@
 - **Staggered запуск потоков**: Потоки запускаются с задержкой 200ms для снижения нагрузки на сервер и предотвращения "шторма" подключений.
 - **Watchdog реконнекта**: Автоматическое восстановление соединения при отсутствии ответа в течение 30 секунд.
 - **No DTLS режим**: Опциональный режим работы без DTLS-инкапсуляции для прямого подключения к WireGuard серверу через TURN. Предназначен для отладки или специфичных сетевых условий. Реализован в методе `runNoDTLS()`.
+- **Метрики для диагностики**: Счётчики ошибок для отслеживания проблем (dtlsTxDropCount, dtlsRxErrorCount, relayTxErrorCount, relayRxErrorCount, noDtlsTxDropCount, noDtlsRxErrorCount).
+- **Улучшенная обработка ошибок аутентификации**: Функции `isAuthError()` и `handleAuthError()` для детектирования и обработки устаревших credentials.
+- **Deadline management**: Явные дедлайны для handshake (10с), session ID (5с) и обновления дедлайнов каждые 5с (30с таймаут).
+- **Connected UDP/TCP abstraction**: Интерфейс `net.PacketConn` для унификации обработки UDP и TCP соединений.
 
 ---
 
@@ -32,7 +47,7 @@
 ### `tunnel/src/main/java/com/wireguard/config/`
 
 - **`Peer.java`**: Поддержка `extraLines` — списка строк, начинающихся с `#@`. Это позволяет хранить метаданные прокси прямо в `.conf` файле, не нарушая совместимость с другими клиентами.
-- **`Config.java`**: Парсер обновлён для корректной передачи комментариев с префиксом `#@` в соответствующие секции.
+- **`Config.java`**: Парсер корректно передаёт комментарии с префиксом `#@` в соответствующие секции.
 
 ---
 
@@ -41,28 +56,28 @@
 ### `ui/src/main/java/com/wireguard/android/turn/TurnProxyManager.kt`
 
 - **`TurnSettings`**: Модель данных для настроек прокси (VK Link, Peer, Port, Streams).
-- **`TurnConfigProcessor`**: Логика инъекции/извлечения настроек из текста конфигурации. Метод `modifyConfigForActiveTurn` динамически подменяет `Endpoint` на `127.0.0.1` и **принудительно устанавливает MTU в 1280**, чтобы компенсировать оверхед инкапсуляции.
+- **`TurnConfigProcessor`**: Логика инъекции/извлечения настроек из текста конфигурации. Метод `modifyConfigForActiveTurn` динамически подменяет `Endpoint` на `127.0.0.1`, **принудительно устанавливает MTU в 1280**, и **PersistentKeepalive=25** (для DTLS режима) для компенсации оверхеда инкапсуляции и поддержания соединения.
 - **`TurnProxyManager`**: Управляет нативным процессом прокси.
 
   **Синхронизация при запуске:**
   - Вызывает `TurnBackend.waitForVpnServiceRegistered(2000)` для ожидания регистрации JNI
-  - После подтверждения JNI запускает `wgTurnProxyStart()`
+  - После подтверждения JNI запускает `wgTurnProxyStart()` с параметром `networkHandle`
   - Это гарантирует что `VpnService.protect()` будет работать для всех сокетов TURN
 
-  **NetworkCallback с фильтрацией (Android 14 fix):**
-  - Фильтрация по типу транспорта (WiFi, Cellular, Ethernet) — игнорируются изменения внутри одного типа сети
-  - Фильтрация по `NET_CAPABILITY_INTERNET` — игнорируются сети без доступа в интернет
-  - Фильтрация по `NET_CAPABILITY_NOT_DEFAULT` — игнорируются фоновые сети (MMS, IMS, VPN)
-  - Debounce 15 секунд между рестартами для защиты от «флаппинга» сети
-  - Детальное логирование с указанием типа транспорта
-  - Флаг `ignoreFirstNetworkChange` — игнорирует первое событие network change после запуска TURN
-  - Сброс `lastTransportType = null` в `onLost()` — обеспечивает детектирование следующего переключения сети
+  **PhysicalNetworkMonitor:**
+  - Отдельный класс `PhysicalNetworkMonitor` отслеживает физические сети (WiFi, Cellular)
+  - Игнорирует VPN интерфейсы для избежания обратной связи с собственным туннелем
+  - Приоритет выбора: WiFi > Cellular > любая другая сеть с интернетом
+  - Debounce 1500ms через Flow для фильтрации быстрых переключений
+  - `currentNetwork` — синхронное получение текущего лучшего сети без debounce
+  - `bestNetwork` — Flow с debounce 1500ms и distinctUntilChanged
 
   **Автоматический рестарт:**
-  - При смене типа сети (WiFi ↔ Cellular) TURN переподключается без участия пользователя
+  - При смене физического типа сети (WiFi ↔ Cellular) TURN переподключается без участия пользователя
   - Вызывает `wgNotifyNetworkChange()` для сброса DNS/HTTP в Go слое
-  - Экспоненциальный backoff при неудачах (5с → 10с → 20с)
+  - Экспоненциальный backoff при неудачах: 2с → 5с → 15с (при более 5 попытках)
   - Флаг `userInitiatedStop` — не рестартировать, если пользователь явно остановил туннель
+  - `operationMutex` — мьютекс для сериализации операций start/stop и предотвращения гонок
 
 ### `tunnel/src/main/java/com/wireguard/android/backend/TurnBackend.java`
 
@@ -70,6 +85,7 @@
 - **CountDownLatch для синхронизации JNI**: Latch сигнализирует что JNI зарегистрирован и готов защищать сокеты.
 - **`waitForVpnServiceRegistered(timeout)`**: Метод для ожидания регистрации JNI перед запуском TURN прокси.
 - **`wgNotifyNetworkChange()`**: Native функция для сброса DNS/HTTP при смене сети.
+- **`wgTurnProxyStart(..., networkHandle)`**: Native функция принимает `networkHandle` (long) для привязки сокетов к конкретному Network.
 
 ### `tunnel/src/main/java/com/wireguard/android/backend/GoBackend.java`
 
@@ -82,15 +98,13 @@
   - В `setStateInternal()` TURN прокси запускается после `builder.establish()`
   - Это гарантирует что `VpnService.protect()` будет работать для сокетов TURN
 
-- **Убрано дублирование:**
-  - `TurnBackend.onVpnServiceCreated()` вызывается только в `onCreate()`
-  - В `onStartCommand()` вызов удалён
+- **Регистрация VpnService:**
+  - `TurnBackend.onVpnServiceCreated()` вызывается в `onCreate()` для регистрации в JNI
 
 ### `ui/src/main/java/com/wireguard/android/model/TunnelManager.kt`
 
 - **Запуск TURN после создания туннеля:**
   - TURN прокси запускается через `TurnProxyManager.onTunnelEstablished()` после того как `GoBackend.setStateInternal()` завершит создание туннеля
-  - Метод `startForTunnel()` больше не вызывается до создания туннеля
 
 ---
 
@@ -161,6 +175,28 @@ AllowedIPs = 0.0.0.0/0
 #@wgt:NoDTLS = true
 ```
 
+### PersistentKeepalive (автоматический)
+
+При включённом DTLS режиме (`#@wgt:NoDTLS = false` или не указано), `TurnConfigProcessor.modifyConfigForActiveTurn` **автоматически устанавливает PersistentKeepalive=25** для всех пиров.
+
+**Назначение:**
+- Поддержание NAT mapping для DTLS соединения
+- Предотвращение таймаута UDP сессии на стороне TURN сервера
+- Значение 25 секунд выбрано как оптимальный баланс между нагрузкой и надёжностью
+
+**Логика:**
+- Если в конфиге уже указан PersistentKeepalive ≤ 25, используется оригинальное значение
+- Если PersistentKeepalive не указан или > 25, устанавливается 25
+- В режиме No DTLS PersistentKeepalive не модифицируется
+
+**Пример (автоматически добавляется):**
+```
+[Peer]
+PublicKey = <key>
+Endpoint = 127.0.0.1:9000
+PersistentKeepalive = 25
+```
+
 ---
 
 ## 7. Хранение настроек
@@ -197,15 +233,84 @@ GoBackend.setStateInternal()
   → wgTurnOn()                             ← Go backend запущен
   → service.protect() для сокетов WireGuard
   → TurnProxyManager.onTunnelEstablished() ← TURN запускается ПОСЛЕ туннеля
+    → PhysicalNetworkMonitor.currentNetwork ← Получение текущего network handle
     → TurnBackend.waitForVpnServiceRegistered() ← Ждём JNI
-    → wgTurnProxyStart()                   ← Запуск TURN прокси
+    → wgTurnProxyStart(..., networkHandle) ← Запуск TURN с handle сети
+      → update_current_network() в JNI      ← Кэширование Network object
       → VK Auth для получения credentials
       → Подключение к TURN серверу (4 потока)
       → DTLS handshake для каждого потока
-      → wgProtectSocket() для всех сокетов
+      → wgProtectSocket() + bindSocket() для всех сокетов
 ```
 
 **Преимущества:**
 - TURN запускается после создания туннеля, что гарантирует работу `VpnService.protect()` для всех сокетов
 - Явная синхронизация через CountDownLatch исключает гонки условий
 - Сокеты WireGuard защищаются до запуска TURN
+- **networkHandle** передаётся в Go для привязки сокетов к конкретному Network через `bindSocket()`
+- **PhysicalNetworkMonitor** отслеживает физические сети и автоматически перезапускает TURN при смене типа сети
+
+---
+
+## 9. PhysicalNetworkMonitor
+
+### Расположение
+`ui/src/main/java/com/wireguard/android/turn/PhysicalNetworkMonitor.kt`
+
+### Назначение
+Мониторинг физических сетей (WiFi, Cellular) для автоматического перезапуска TURN при смене типа подключения.
+
+### Ключевые особенности
+
+**Приоритет сетей:**
+1. WiFi (TRANSPORT_WIFI)
+2. Cellular (TRANSPORT_CELLULAR)
+3. Любая другая физическая сеть с интернетом
+
+**Фильтрация:**
+- Игнорирует VPN транспорты (`TRANSPORT_VPN`) — предотвращает обратную связь с собственным туннелем
+- Требует `NET_CAPABILITY_INTERNET` — только сети с доступом в интернет
+- Требует `NET_CAPABILITY_NOT_VPN` — исключает VPN из рассмотрения
+
+**Debounce и стабильность:**
+- `bestNetwork` Flow с debounce **1500ms** — фильтрация быстрых переключений
+- `distinctUntilChanged()` — только уникальные изменения
+- `currentNetwork` — синхронное получение текущего значения без debounce
+
+**NetworkCallback:**
+- `onCapabilitiesChanged()` — синхронизация capabilities, добавление/удаление из ConcurrentHashMap
+- `onLost()` — удаление сети из мониторинга
+- `update()` — применение логики приоритетов и обновление `_bestNetwork`
+
+**Жизненный цикл:**
+- `start()` — регистрация callback, инициализация текущего состояния
+- `stop()` — отписка callback, очистка ConcurrentHashMap
+
+### Интеграция с TurnProxyManager
+
+```kotlin
+val networkMonitor = PhysicalNetworkMonitor(context)
+networkMonitor.start()
+
+scope.launch {
+    networkMonitor.bestNetwork.collectLatest { network ->
+        if (network != null) {
+            handleNetworkChange(network)
+        }
+    }
+}
+```
+
+**Логика рестарта:**
+1. Сохранение baseline сети при запуске туннеля
+2. Игнорирование одинаковых сетей (стабильность)
+3. При реальном изменении — вызов `performRestartSequence()`
+4. Рестарт: stop → wgNotifyNetworkChange() → delay(500) → start
+
+### Преимущества
+
+- **Централизованный мониторинг** — отдельный класс для отслеживания физических сетей
+- **Приоритизация** — явный выбор WiFi > Cellular
+- **Flow-based** — реактивный подход с debounce через Kotlin Flow
+- **Игнорирование VPN** — явная фильтрация VPN транспортов
+- **ConcurrentHashMap** — потокобезопасное хранение сетей

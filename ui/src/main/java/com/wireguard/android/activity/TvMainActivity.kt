@@ -363,6 +363,23 @@ class TvMainActivity : AppCompatActivity() {
                 ?: return@forEach
             try {
                 val tunnel = listItem.item!!
+
+                // Update TURN status visibility
+                val turn = tunnel.turnSettings
+                val turnEnabled = turn != null && turn.enabled
+                val proxyRunning = Application.getTurnProxyManager().isRunning(tunnel.name)
+                val tunnelRunning = tunnel.state == Tunnel.State.UP
+
+                val turnText = when {
+                    !turnEnabled -> "TURN: Off"
+                    !tunnelRunning -> "TURN: On"
+                    tunnel == pendingTunnel -> "TURN: Starting..."
+                    proxyRunning -> "TURN: Running"
+                    else -> "TURN: Starting..."
+                }
+                listItem.tunnelTurnStatus.text = turnText
+                listItem.tunnelTurnStatus.visibility = if (isDeleting.get()) View.GONE else View.VISIBLE
+
                 if (tunnel.state != Tunnel.State.UP || isDeleting.get()) {
                     throw Exception()
                 }

@@ -69,6 +69,17 @@
                 tools:text="rx: 200 MB, tx: 100 MB" />
 
             <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/tunnel_turn_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?attr/colorAccent"
+                android:visibility="@{isDeleting ? View.GONE : View.VISIBLE}"
+                app:layout_constraintBottom_toTopOf="@id/tunnel_transfer"
+                app:layout_constraintStart_toStartOf="parent"
+                tools:text="TURN: On" />
+
+            <com.google.android.material.textview.MaterialTextView
                 android:id="@+id/tunnel_delete"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

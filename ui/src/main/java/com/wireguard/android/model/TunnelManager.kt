@@ -275,27 +275,29 @@ class TunnelManager(
         var throwable: Throwable? = null
         try {
             var configToUse = tunnel.getConfigAsync()
-            if (state == Tunnel.State.UP) {
-                val turn = tunnel.turnSettings
-                if (turn != null && turn.enabled) {
+            val turn = tunnel.turnSettings
+            val turnEnabled = turn != null && turn.enabled
+            
+            // Determine if TURN should be started after tunnel is established
+            // This happens when explicitly requesting UP, or TOGGLE from DOWN state
+            val shouldStartTurn = state == Tunnel.State.UP || (state == Tunnel.State.TOGGLE && tunnel.state == Tunnel.State.DOWN)
+
+            if (turnEnabled) {
+                if (shouldStartTurn) {
                     configToUse = TurnConfigProcessor.modifyConfigForActiveTurn(configToUse, turn)
-                }
-            } else if (state == Tunnel.State.DOWN) {
-                val turn = tunnel.turnSettings
-                if (turn != null && turn.enabled) {
+                } else {
                     withContext(Dispatchers.IO) {
                         getTurnProxyManager().stopForTunnel(tunnel.name)
                     }
                 }
             }
+
             newState = withContext(Dispatchers.IO) { getBackend().setState(tunnel, state, configToUse) }
 
             // NEW: Start TURN AFTER tunnel is established
             // This ensures VpnService.protect() will work for TURN sockets
-            if (newState == Tunnel.State.UP && state == Tunnel.State.UP) {
-                // Use tunnel.turnSettings (already loaded from turnSettingsStore)
-                val turn = tunnel.turnSettings
-                if (turn != null && turn.enabled) {
+            if (shouldStartTurn && newState == Tunnel.State.UP) {
+                if (turnEnabled) {
                     Log.d(TAG, "Tunnel established, starting TURN proxy...")
                     val turnStarted = withContext(Dispatchers.IO) {
                         getTurnProxyManager().onTunnelEstablished(tunnel.name, turn)

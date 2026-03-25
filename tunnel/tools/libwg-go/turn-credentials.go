@@ -8,9 +8,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -112,18 +114,71 @@ func getVkCreds(ctx context.Context, link string) (string, string, string, error
 	default:
 	}
 
-	doRequest := func(data string, url string) (resp map[string]interface{}, err error) {
-		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer([]byte(data)))
-		if err != nil { return nil, err }
+	doRequest := func(data string, requestURL string) (resp map[string]interface{}, err error) {
+		// Resolve host via DNS cache with cascading fallback
+		parsedURL, err := url.Parse(requestURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse URL: %w", err)
+		}
+
+		// Resolve domain name
+		domain := parsedURL.Hostname()
+		resolvedIP, err := hostCache.Resolve(ctx, domain)
+		if err != nil {
+			return nil, fmt.Errorf("DNS resolution failed for %s: %w", domain, err)
+		}
+
+		// Replace host with IP in URL
+		port := parsedURL.Port()
+		if port == "" {
+			port = "443"
+		}
+		ipURL := "https://" + resolvedIP + ":" + port + parsedURL.Path
+		if parsedURL.RawQuery != "" {
+			ipURL += "?" + parsedURL.RawQuery
+		}
+
+		// Create request with IP instead of domain
+		req, err := http.NewRequestWithContext(ctx, "POST", ipURL, bytes.NewBuffer([]byte(data)))
+		if err != nil {
+			return nil, err
+		}
+
+		// Set original host for HTTP Host header
+		req.Host = domain
 		req.Header.Add("User-Agent", "Mozilla/5.0 (Android 12; Mobile; rv:144.0)")
 		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-		httpResp, err := turnHTTPClient.Do(req)
-		if err != nil { return nil, err }
+
+		// Create HTTP client with custom TLS config for certificate verification
+		client := &http.Client{
+			Timeout: 20 * time.Second,
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+					Control:   protectControl,
+				}).DialContext,
+				TLSClientConfig: &tls.Config{
+					ServerName: domain,  // Use domain for certificate verification
+				},
+			},
+		}
+
+		httpResp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
 		defer httpResp.Body.Close()
 		body, err := io.ReadAll(httpResp.Body)
-		if err != nil { return nil, err }
-		if err = json.Unmarshal(body, &resp); err != nil { return nil, err }
-		if errMsg, ok := resp["error"].(map[string]interface{}); ok { return resp, fmt.Errorf("VK error: %v", errMsg) }
+		if err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(body, &resp); err != nil {
+			return nil, err
+		}
+		if errMsg, ok := resp["error"].(map[string]interface{}); ok {
+			return resp, fmt.Errorf("VK error: %v", errMsg)
+		}
 		return resp, nil
 	}
 
@@ -159,6 +214,23 @@ func getVkCreds(ctx context.Context, link string) (string, string, string, error
 	ts := resp["turn_server"].(map[string]interface{})
 	urls := ts["urls"].([]interface{})
 	address := strings.TrimPrefix(strings.TrimPrefix(strings.Split(urls[0].(string), "?")[0], "turn:"), "turns:")
+
+	// Resolve TURN server address via cascading DNS (if it's a domain)
+	host, port, err := net.SplitHostPort(address)
+	if err == nil {
+		// Check if host is IP address
+		if ip := net.ParseIP(host); ip == nil {
+			// It's a domain name, resolve it
+			resolvedIP, err := hostCache.Resolve(ctx, host)
+			if err != nil {
+				turnLog("[TURN DNS] Warning: failed to resolve TURN server %s: %v", host, err)
+				// Don't fail, use original address
+			} else {
+				address = net.JoinHostPort(resolvedIP, port)
+				turnLog("[TURN DNS] Resolved TURN server %s -> %s", host, resolvedIP)
+			}
+		}
+	}
 
 	// Save to cache
 	credsCache = TurnCredentials{

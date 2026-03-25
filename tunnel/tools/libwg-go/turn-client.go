@@ -45,21 +45,6 @@ func protectControl(network, address string, c syscall.RawConn) error {
 	})
 }
 
-var (
-	protectedResolverMu sync.RWMutex
-	protectedResolver   = createProtectedResolver()
-)
-
-func createProtectedResolver() *net.Resolver {
-	return &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{Timeout: 5 * time.Second, Control: protectControl}
-			return d.DialContext(ctx, "udp", "77.88.8.8:53")
-		},
-	}
-}
-
 func init() {
 	os.Setenv("GODEBUG", "netdns=go")
 }
@@ -69,27 +54,22 @@ func wgNotifyNetworkChange() {
 	// Invalidate credentials cache on network change
 	invalidateCredentialsCache()
 
-	protectedResolverMu.Lock()
-	defer protectedResolverMu.Unlock()
-	protectedResolver = createProtectedResolver()
+	// Clear DNS cache
+	ClearCache()
+
 	turnHTTPClient.CloseIdleConnections()
-	turnHTTPClient.Transport = &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout: 30 * time.Second,
-			Control: protectControl,
-			Resolver: protectedResolver,
-		}).DialContext,
-		MaxIdleConns: 100,
-		IdleConnTimeout: 90 * time.Second,
-	}
-	turnLog("[NETWORK] Network change notified: resolver reset, HTTP connections cleared, credentials cache invalidated")
+	turnLog("[NETWORK] Network change notified: HTTP connections cleared, credentials cache invalidated, DNS cache cleared")
 }
 
 var turnHTTPClient = &http.Client{
 	Timeout: 20 * time.Second,
 	Transport: &http.Transport{
-		DialContext: (&net.Dialer{Timeout: 30 * time.Second, Control: protectControl, Resolver: protectedResolver}).DialContext,
-		MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout: 30 * time.Second,
+			Control: protectControl,
+		}).DialContext,
+		MaxIdleConns: 100,
+		IdleConnTimeout: 90 * time.Second,
 	},
 }
 
@@ -155,7 +135,11 @@ func (s *stream) run(link string, peer *net.UDPAddr, udp bool, okchan chan<- str
 			}
 
 			turnLog("[STREAM %d] Dialing TURN server %s...", s.id, addr)
-			dialer := &net.Dialer{Control: protectControl, Resolver: protectedResolver}
+			// addr is already resolved in getVkCreds() via cascading DNS, so use DialContext without Resolver
+			dialer := &net.Dialer{
+				Timeout: 30 * time.Second,
+				Control: protectControl,
+			}
 			var turnConn net.PacketConn
 			if udp {
 				c, err := dialer.DialContext(sCtx, "udp", addr)
@@ -455,7 +439,6 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, n int, udp int, listen
 	noDtls := noDtlsC != 0
 	networkHandle := int64(networkHandleC)
 
-	//turnLog("[PROXY] Hub starting on %s (peer=%s, streams=%d, turnIp=%s, turnPort=%d, noDtls=%v)", listenAddr, peerAddr, n, turnIp, turnPort, noDtls)
 	turnLog("[PROXY] Hub starting on %s (streams=%d, noDtls=%v, networkHandle=%d)", listenAddr, n, noDtls, networkHandle)
 	turnMutex.Lock()
 	if currentTurnCancel != nil { currentTurnCancel() }
@@ -463,8 +446,32 @@ func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, n int, udp int, listen
 	currentTurnCancel = cancel
 	turnMutex.Unlock()
 
-	peer, err := net.ResolveUDPAddr("udp", peerAddr)
-	if err != nil { return -1 }
+	// Resolve peerAddr via cascading DNS (if it's a domain)
+	var peer *net.UDPAddr
+	host, port, err := net.SplitHostPort(peerAddr)
+	if err == nil {
+		if ip := net.ParseIP(host); ip == nil {
+			// It's a domain name, resolve it
+			resolvedIP, err := hostCache.Resolve(context.Background(), host)
+			if err != nil {
+				turnLog("[DNS] Warning: failed to resolve peer: %v, using original", err)
+				peer, err = net.ResolveUDPAddr("udp", peerAddr)
+				if err != nil { return -1 }
+			} else {
+				peerAddr = net.JoinHostPort(resolvedIP, port)
+				//turnLog("[DNS] Resolved peer %s -> %s", host, resolvedIP)
+				peer, err = net.ResolveUDPAddr("udp", peerAddr)
+				if err != nil { return -1 }
+			}
+		} else {
+			peer, err = net.ResolveUDPAddr("udp", peerAddr)
+			if err != nil { return -1 }
+		}
+	} else {
+		peer, err = net.ResolveUDPAddr("udp", peerAddr)
+		if err != nil { return -1 }
+	}
+
 	parts := strings.Split(vklink, "join/")
 	link := parts[len(parts)-1]
 	if idx := strings.IndexAny(link, "/?#"); idx != -1 { link = link[:idx] }

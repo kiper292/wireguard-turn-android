@@ -12,6 +12,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 /**
  * Native interface for TURN proxy management.
@@ -88,6 +89,50 @@ public final class TurnBackend {
             return false;
         }
     }
+
+    // --- Captcha support ---
+
+    /**
+     * Callback that receives a captcha redirect URI and must return the success_token.
+     * The function is called from a background (Go) thread. It should block until
+     * the captcha is solved or return empty string on failure/timeout.
+     */
+    private static volatile Function<String, String> captchaHandler;
+
+    /**
+     * Sets the captcha handler. Call this from Application.onCreate() or similar.
+     * @param handler Function that takes redirect_uri and returns success_token
+     */
+    public static void setCaptchaHandler(@Nullable Function<String, String> handler) {
+        captchaHandler = handler;
+        Log.d(TAG, "Captcha handler " + (handler != null ? "registered" : "cleared"));
+    }
+
+    /**
+     * Called from JNI (Go thread) when VK API requires captcha.
+     * Blocks the calling thread until captcha is solved.
+     * @param redirectUri The VK captcha page URL to show in WebView
+     * @return success_token string, or empty string on failure
+     */
+    @SuppressWarnings("unused") // Called from native code
+    public static String onCaptchaRequired(String redirectUri) {
+        Log.d(TAG, "onCaptchaRequired called with URI length=" + (redirectUri != null ? redirectUri.length() : 0));
+        Function<String, String> handler = captchaHandler;
+        if (handler == null) {
+            Log.e(TAG, "No captcha handler registered!");
+            return "";
+        }
+        try {
+            String result = handler.apply(redirectUri);
+            Log.d(TAG, "Captcha handler returned: " + (result != null && !result.isEmpty() ? "token" : "empty"));
+            return result != null ? result : "";
+        } catch (Exception e) {
+            Log.e(TAG, "Captcha handler threw exception", e);
+            return "";
+        }
+    }
+
+    // --- End captcha support ---
 
     public static native void wgSetVpnService(@Nullable VpnService service);
 

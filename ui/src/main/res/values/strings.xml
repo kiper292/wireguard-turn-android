@@ -277,4 +277,5 @@
     <string name="turn_port">Turn port</string>
     <string name="turn_port_hint">(auto)</string>
     <string name="turn_no_dtls">No DTLS (not recommended)</string>
+    <string name="captcha_title">VK Captcha</string>
 </resources>

@@ -5,6 +5,12 @@
 
 package main
 
+/*
+#include <stdlib.h>
+extern const char* requestCaptcha(const char* redirect_uri);
+*/
+import "C"
+
 import (
 	"bytes"
 	"context"
@@ -19,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/google/uuid"
 )
@@ -409,14 +416,24 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 	data = fmt.Sprintf("vk_join_link=https://vk.ru/call/join/%s&name=123&access_token=%s", url.QueryEscape(link), token3)
 	urlAddr := fmt.Sprintf("https://api.vk.ru/method/calls.getAnonymousToken?v=5.274&client_id=%s", creds.ClientID)
 	resp, err = doRequest(data, urlAddr)
+	// Check for captcha error (error_code 14) before giving up
 	if err != nil {
-		turnLog("[STREAM %d] [VK Auth] Token 4 request failed: %v", streamID, err)
-		return "", "", "", err
-	}
-	// Check for VK API error in response
-	if errMsg, ok := resp["error"].(map[string]interface{}); ok {
-		turnLog("[STREAM %d] [VK Auth] Token 4 VK API error: %v", streamID, errMsg)
-		return "", "", "", fmt.Errorf("VK API error (token4): %v", errMsg)
+		if errMsg, ok := resp["error"].(map[string]interface{}); ok {
+			errorCode, _ := errMsg["error_code"].(float64)
+			if int(errorCode) == 14 {
+				turnLog("[STREAM %d] [VK Auth] Captcha required! Requesting user input...", streamID)
+				resp, err = handleCaptchaError(errMsg, streamID, link, token3, creds, doRequest)
+				if err != nil {
+					return "", "", "", fmt.Errorf("captcha handling failed: %w", err)
+				}
+			} else {
+				turnLog("[STREAM %d] [VK Auth] Token 4 VK API error: %v", streamID, errMsg)
+				return "", "", "", fmt.Errorf("VK API error (token4): %v", errMsg)
+			}
+		} else {
+			turnLog("[STREAM %d] [VK Auth] Token 4 request failed: %v", streamID, err)
+			return "", "", "", err
+		}
 	}
 	responseRaw, ok := resp["response"]
 	if !ok {
@@ -544,4 +561,84 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 		return "", "", "", fmt.Errorf("credential not found in turn_server: %v", ts)
 	}
 	return username, credential, address, nil
+}
+
+// handleCaptchaError handles VK captcha challenge (error_code 14).
+// It opens the captcha page via Android WebView and retries the request with the result.
+func handleCaptchaError(errMsg map[string]interface{}, streamID int, link string, token3 string, creds VKCredentials, doRequest func(string, string) (map[string]interface{}, error)) (map[string]interface{}, error) {
+	redirectURI, _ := errMsg["redirect_uri"].(string)
+
+	// captcha_sid can be string or number in JSON
+	var captchaSid string
+	switch v := errMsg["captcha_sid"].(type) {
+	case string:
+		captchaSid = v
+	case float64:
+		captchaSid = fmt.Sprintf("%.0f", v)
+	}
+
+	captchaTs, _ := errMsg["captcha_ts"].(float64)
+	captchaAttempt, _ := errMsg["captcha_attempt"].(float64)
+	if captchaAttempt == 0 {
+		captchaAttempt = 1
+	}
+
+	if redirectURI == "" {
+		return nil, fmt.Errorf("captcha error but no redirect_uri provided")
+	}
+
+	turnLog("[STREAM %d] [VK Auth] Captcha redirect_uri: %s", streamID, redirectURI)
+	turnLog("[STREAM %d] [VK Auth] Captcha SID: %s", streamID, captchaSid)
+
+	// Call Android to show captcha WebView and get success_token
+	successToken := solveCaptcha(redirectURI)
+	if successToken == "" {
+		return nil, fmt.Errorf("captcha was not solved (empty success_token)")
+	}
+
+	turnLog("[STREAM %d] [VK Auth] Captcha solved, retrying with success_token", streamID)
+
+	// Retry calls.getAnonymousToken with captcha parameters
+	data := fmt.Sprintf(
+		"vk_join_link=https://vk.ru/call/join/%s&name=123&captcha_key=&captcha_sid=%s&is_sound_captcha=0&success_token=%s&captcha_ts=%.3f&captcha_attempt=%d&access_token=%s",
+		url.QueryEscape(link),
+		captchaSid,
+		url.QueryEscape(successToken),
+		captchaTs,
+		int(captchaAttempt),
+		token3,
+	)
+	urlAddr := fmt.Sprintf("https://api.vk.ru/method/calls.getAnonymousToken?v=5.274&client_id=%s", creds.ClientID)
+
+	resp, err := doRequest(data, urlAddr)
+	if err != nil {
+		return nil, fmt.Errorf("token4 retry after captcha failed: %w", err)
+	}
+
+	// Check if the retry also returned an error
+	if errMsg2, ok := resp["error"].(map[string]interface{}); ok {
+		return nil, fmt.Errorf("token4 retry after captcha returned error: %v", errMsg2)
+	}
+
+	return resp, nil
+}
+
+// captchaMu ensures only one captcha dialog is shown at a time
+var captchaMu sync.Mutex
+
+// solveCaptcha calls Android via JNI to show captcha WebView and waits for the result.
+func solveCaptcha(redirectURI string) string {
+	captchaMu.Lock()
+	defer captchaMu.Unlock()
+
+	cURI := C.CString(redirectURI)
+	defer C.free(unsafe.Pointer(cURI))
+
+	result := C.requestCaptcha(cURI)
+	if result == nil {
+		return ""
+	}
+	goResult := C.GoString((*C.char)(unsafe.Pointer(result)))
+	C.free(unsafe.Pointer(result))
+	return goResult
 }

@@ -95,6 +95,12 @@
             tools:replace="screenOrientation" />
 
         <activity
+            android:name=".activity.CaptchaActivity"
+            android:exported="false"
+            android:theme="@style/AppTheme"
+            android:label="@string/captcha_title" />
+
+        <activity
             android:name=".activity.LogViewerActivity"
             android:exported="false"
             android:label="@string/log_viewer_title">

@@ -15,6 +15,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +24,114 @@ import (
 
 	"github.com/google/uuid"
 )
+
+const captchaServerAddr = "127.0.0.1:8765"
+const maxCaptchaAttempts = 3
+
+// captchaSolution holds the result submitted by the user via the local HTTP captcha server
+type captchaSolution struct {
+	key string
+	err error
+}
+
+// solveCaptcha starts a local HTTP server showing the captcha image and waits for the user's solution.
+// On desktop platforms (Windows/macOS/Linux) it auto-opens the default browser.
+// On Android the APK is expected to handle the CAPTCHA_REQUIRED: stdout signal.
+func solveCaptcha(ctx context.Context, captchaImg string, captchaSid string) (string, error) {
+	resultCh := make(chan captchaSolution, 1)
+
+	mux := http.NewServeMux()
+	var srv *http.Server
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Captcha</title>
+<style>
+  body { font-family: sans-serif; display: flex; flex-direction: column;
+         align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
+  .box { background: white; padding: 32px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.15); text-align: center; }
+  img { max-width: 300px; margin: 16px 0; border-radius: 6px; }
+  input { font-size: 18px; padding: 8px 14px; border: 2px solid #ccc; border-radius: 6px; width: 220px; }
+  button { margin-top: 14px; padding: 10px 28px; font-size: 16px; background: #2787F5; color: white;
+           border: none; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #1a6ed8; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <h2>VK Captcha Required</h2>
+    <img src="%s" alt="captcha">
+    <br>
+    <form method="POST" action="/submit">
+      <input type="text" name="captcha_key" placeholder="Enter captcha text" autofocus autocomplete="off">
+      <br>
+      <button type="submit">Submit</button>
+    </form>
+  </div>
+</body>
+</html>`, captchaImg)
+	})
+
+	mux.HandleFunc("/submit", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		key := strings.TrimSpace(r.FormValue("captcha_key"))
+		if key == "" {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding-top:80px">
+<h2>✅ Captcha submitted! You can close this tab.</h2></body></html>`)
+		resultCh <- captchaSolution{key: key}
+		// Shutdown server gracefully in background after response is sent
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			srv.Shutdown(context.Background())
+		}()
+	})
+
+	srv = &http.Server{Addr: captchaServerAddr, Handler: mux}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			resultCh <- captchaSolution{err: fmt.Errorf("captcha server error: %w", err)}
+		}
+	}()
+	// Give server a moment to start
+	time.Sleep(150 * time.Millisecond)
+
+	captchaURL := "http://" + captchaServerAddr
+	// Signal to APK / external integrations
+	fmt.Printf("CAPTCHA_REQUIRED:%s\n", captchaURL)
+	turnLog("[VK Auth] Captcha required. Open %s to solve it (sid=%s)", captchaURL, captchaSid)
+
+	// Auto-open browser on desktop platforms
+	switch runtime.GOOS {
+	case "windows":
+		exec.Command("cmd", "/c", "start", captchaURL).Start()
+	case "darwin":
+		exec.Command("open", captchaURL).Start()
+	case "linux":
+		exec.Command("xdg-open", captchaURL).Start()
+	}
+
+	select {
+	case sol := <-resultCh:
+		srv.Shutdown(context.Background())
+		if sol.err != nil {
+			return "", sol.err
+		}
+		turnLog("[VK Auth] Captcha solution received")
+		return sol.key, nil
+	case <-ctx.Done():
+		srv.Shutdown(context.Background())
+		return "", fmt.Errorf("captcha wait cancelled: %w", ctx.Err())
+	}
+}
 
 // VKCredentials stores VK API client credentials
 type VKCredentials struct {
@@ -405,38 +515,71 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
 	    turnLog("[STREAM %d] [VK Auth] getCallPreview completed (optional)", streamID)
     }
 
-    // token 4
-	data = fmt.Sprintf("vk_join_link=https://vk.ru/call/join/%s&name=123&access_token=%s", url.QueryEscape(link), token3)
-	urlAddr := fmt.Sprintf("https://api.vk.ru/method/calls.getAnonymousToken?v=5.274&client_id=%s", creds.ClientID)
-	resp, err = doRequest(data, urlAddr)
-	if err != nil {
-		turnLog("[STREAM %d] [VK Auth] Token 4 request failed: %v", streamID, err)
-		return "", "", "", err
-	}
-	// Check for VK API error in response
-	if errMsg, ok := resp["error"].(map[string]interface{}); ok {
-		turnLog("[STREAM %d] [VK Auth] Token 4 VK API error: %v", streamID, errMsg)
-		return "", "", "", fmt.Errorf("VK API error (token4): %v", errMsg)
-	}
-	responseRaw, ok := resp["response"]
-	if !ok {
-		turnLog("[STREAM %d] [VK Auth] Token 4: 'response' field not found in response: %v", streamID, resp)
-		return "", "", "", fmt.Errorf("invalid response structure for token4: 'response' not found")
-	}
-	responseMap, ok := responseRaw.(map[string]interface{})
-	if !ok || responseMap == nil {
-		turnLog("[STREAM %d] [VK Auth] Token 4: invalid response type: %T", streamID, responseRaw)
-		return "", "", "", fmt.Errorf("invalid response structure for token4: %v", resp)
-	}
-	token4Raw, ok := responseMap["token"]
-	if !ok {
-		turnLog("[STREAM %d] [VK Auth] Token 4: 'token' field not found in response: %v", streamID, responseMap)
-		return "", "", "", fmt.Errorf("token4 not found in response: %v", resp)
-	}
-	token4, ok := token4Raw.(string)
-	if !ok {
-		turnLog("[STREAM %d] [VK Auth] Token 4: 'token' is not a string: %T", streamID, token4Raw)
-		return "", "", "", fmt.Errorf("token4 is not a string: %v", token4Raw)
+    // token 4 — with captcha retry support (error_code 14)
+	var token4 string
+	{
+		var captchaSid, captchaKey string
+		for attempt := 0; attempt <= maxCaptchaAttempts; attempt++ {
+			t4Data := fmt.Sprintf("vk_join_link=https://vk.ru/call/join/%s&name=123&access_token=%s", url.QueryEscape(link), token3)
+			if captchaSid != "" && captchaKey != "" {
+				t4Data += fmt.Sprintf("&captcha_sid=%s&captcha_key=%s", url.QueryEscape(captchaSid), url.QueryEscape(captchaKey))
+				turnLog("[STREAM %d] [VK Auth] Token 4 retry with captcha (attempt %d/%d)", streamID, attempt, maxCaptchaAttempts)
+			}
+			urlAddr := fmt.Sprintf("https://api.vk.ru/method/calls.getAnonymousToken?v=5.274&client_id=%s", creds.ClientID)
+			resp, err = doRequest(t4Data, urlAddr)
+			if err != nil {
+				turnLog("[STREAM %d] [VK Auth] Token 4 request failed: %v", streamID, err)
+				return "", "", "", err
+			}
+
+			// Detect captcha challenge (error_code 14)
+			if errMap, ok := resp["error"].(map[string]interface{}); ok {
+				errCode, _ := errMap["error_code"].(float64)
+				if errCode == 14 {
+					if attempt >= maxCaptchaAttempts {
+						return "", "", "", fmt.Errorf("captcha failed after %d attempts", maxCaptchaAttempts)
+					}
+					sid, _ := errMap["captcha_sid"].(string)
+					img, _ := errMap["captcha_img"].(string)
+					if sid == "" || img == "" {
+						return "", "", "", fmt.Errorf("captcha response missing sid/img: %v", errMap)
+					}
+					turnLog("[STREAM %d] [VK Auth] Captcha required (sid=%s), attempt %d/%d", streamID, sid, attempt+1, maxCaptchaAttempts)
+					key, solveErr := solveCaptcha(ctx, img, sid)
+					if solveErr != nil {
+						return "", "", "", fmt.Errorf("captcha solve error: %w", solveErr)
+					}
+					captchaSid = sid
+					captchaKey = key
+					continue
+				}
+				turnLog("[STREAM %d] [VK Auth] Token 4 VK API error: %v", streamID, errMap)
+				return "", "", "", fmt.Errorf("VK API error (token4): %v", errMap)
+			}
+
+			responseRaw, ok := resp["response"]
+			if !ok {
+				turnLog("[STREAM %d] [VK Auth] Token 4: 'response' field not found in response: %v", streamID, resp)
+				return "", "", "", fmt.Errorf("invalid response structure for token4: 'response' not found")
+			}
+			responseMap, ok := responseRaw.(map[string]interface{})
+			if !ok || responseMap == nil {
+				turnLog("[STREAM %d] [VK Auth] Token 4: invalid response type: %T", streamID, responseRaw)
+				return "", "", "", fmt.Errorf("invalid response structure for token4: %v", resp)
+			}
+			token4Raw, ok := responseMap["token"]
+			if !ok {
+				turnLog("[STREAM %d] [VK Auth] Token 4: 'token' field not found in response: %v", streamID, responseMap)
+				return "", "", "", fmt.Errorf("token4 not found in response: %v", resp)
+			}
+			t4, ok := token4Raw.(string)
+			if !ok {
+				turnLog("[STREAM %d] [VK Auth] Token 4: 'token' is not a string: %T", streamID, token4Raw)
+				return "", "", "", fmt.Errorf("token4 is not a string: %v", token4Raw)
+			}
+			token4 = t4
+			break
+		}
 	}
 	turnLog("[STREAM %d] [VK Auth] Token 4 (messages token) received", streamID)
 

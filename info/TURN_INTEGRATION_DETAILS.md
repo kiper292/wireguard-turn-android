@@ -721,15 +721,26 @@ func (s *stream) run(link string, ...) {
 
 ### Архитектура
 
-**Каскадный fallback:**
+**Список DNS серверов:**
+При запуске прокси формируется финальный список `dnsServers`:
+```
+dnsServers = systemDns + dnsServersPredefined
+```
+- **systemDns** — системные DNS серверы, полученные из `LinkProperties` текущего сетевого соединения (WiFi/4G)
+- **dnsServersPredefined** — предустановленные fallback серверы (Yandex + Google)
+
+Если системные DNS недоступны, используются только predefined.
+
+**Каскадный fallback для каждого сервера:**
 1. **UDP (порт 53)** — стандартный DNS запрос, самый быстрый
 2. **DoH (порт 443)** — DNS-over-HTTPS, fallback если UDP заблокирован
 3. **DoT (порт 853)** — DNS-over-TLS, последний fallback
 
-**Серверы:**
+**Predefined серверы:**
 - DNS сервер: `77.88.8.8` (Yandex DNS)
 - DoH: `https://common.dot.dns.yandex.net/dns-query` (`77.88.8.8:443`)
 - DoT: `77.88.8.8:853` (ServerName: `common.dot.dns.yandex.net`)
+- Google: `8.8.8.8` (Plain + DoH)
 
 ### DnsCache
 
@@ -742,6 +753,19 @@ func (s *stream) run(link string, ...) {
 **Методы:**
 - `Resolve(ctx, domain)` — разрешение домена с кэшированием
 - `ClearCache()` — очистка кэша (вызывается при смене сети)
+- `InitSystemDns(servers []string)` — инициализация системных DNS при старте прокси
+
+### Получение системных DNS
+
+Системные DNS извлекаются из `Network` объекта через JNI:
+1. `ConnectivityManager.getLinkProperties(network)` → `LinkProperties`
+2. `LinkProperties.getDnsServers()` → `List<InetAddress>`
+3. IP адреса передаются в Go как строка через запятую
+4. `InitSystemDns()` добавляет их в начало списка `dnsServers`
+
+**JNI функции:**
+- `Java_TurnBackend_wgGetNetworkDnsServers(networkHandle)` — Java native метод
+- `getNetworkDnsServers(network_handle)` — C функция, вызываемая из Go
 
 ### Интеграция
 

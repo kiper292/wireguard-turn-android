@@ -19,6 +19,7 @@ extern char *wgVersion();
 extern int wgTurnProxyStart(const char *peer_addr, const char *vklink, const char *mode, int n, int udp, const char *listen_addr, const char *turn_ip, int turn_port, const char *peer_type, int streams_per_cred, int watchdog_timeout, long long network_handle);
 extern void wgTurnProxyStop();
 extern void wgNotifyNetworkChange();
+extern const char* getNetworkDnsServers(long long network_handle);
 
 static JavaVM *java_vm;
 static jobject vpn_service_global;
@@ -32,9 +33,14 @@ static jmethodID file_descriptor_init;
 static jclass connectivity_manager_class_global;
 static jclass network_class_global;
 static jclass file_descriptor_class_global;
+static jclass link_properties_class_global;
+static jclass inet_address_class_global;
 static jobject connectivity_manager_instance_global;
 static jobject current_network_global = NULL;
 static jlong current_network_handle = 0;
+static jmethodID get_link_properties_method;
+static jmethodID get_dns_servers_method;
+static jmethodID inet_address_get_host_method;
 
 // Captcha handler
 static jclass turn_backend_class_global = NULL;
@@ -97,11 +103,18 @@ JNIEXPORT void JNICALL Java_com_wireguard_android_backend_TurnBackend_wgSetVpnSe
 		if (file_descriptor_class_global) (*env)->DeleteGlobalRef(env, file_descriptor_class_global);
 		if (connectivity_manager_instance_global) (*env)->DeleteGlobalRef(env, connectivity_manager_instance_global);
 		if (current_network_global) (*env)->DeleteGlobalRef(env, current_network_global);
+		if (link_properties_class_global) (*env)->DeleteGlobalRef(env, link_properties_class_global);
+		if (inet_address_class_global) (*env)->DeleteGlobalRef(env, inet_address_class_global);
 		connectivity_manager_class_global = NULL;
 		network_class_global = NULL;
 		file_descriptor_class_global = NULL;
 		connectivity_manager_instance_global = NULL;
 		current_network_global = NULL;
+		link_properties_class_global = NULL;
+		inet_address_class_global = NULL;
+		get_link_properties_method = NULL;
+		get_dns_servers_method = NULL;
+		inet_address_get_host_method = NULL;
 		// NOTE: Do NOT reset turn_backend_class_global / on_captcha_required_method here.
 		// TurnBackend is a Java class independent of VpnService lifecycle.
 	}
@@ -129,6 +142,23 @@ JNIEXPORT void JNICALL Java_com_wireguard_android_backend_TurnBackend_wgSetVpnSe
 		network_class_global = (*env)->NewGlobalRef(env, n_class);
 		get_network_handle_method = (*env)->GetMethodID(env, network_class_global, "getNetworkHandle", "()J");
 		bind_socket_method = (*env)->GetMethodID(env, network_class_global, "bindSocket", "(Ljava/io/FileDescriptor;)V");
+
+		// Cache LinkProperties and getDnsServers
+		jclass lp_class = (*env)->FindClass(env, "android/net/LinkProperties");
+		if (lp_class) {
+			link_properties_class_global = (*env)->NewGlobalRef(env, lp_class);
+			get_dns_servers_method = (*env)->GetMethodID(env, link_properties_class_global, "getDnsServers", "()Ljava/util/List;");
+			(*env)->DeleteLocalRef(env, lp_class);
+		}
+		get_link_properties_method = (*env)->GetMethodID(env, connectivity_manager_class_global, "getLinkProperties", "(Landroid/net/Network;)Landroid/net/LinkProperties;");
+
+		// Cache InetAddress.getHostAddress()
+		jclass ia_class = (*env)->FindClass(env, "java/net/InetAddress");
+		if (ia_class) {
+			inet_address_class_global = (*env)->NewGlobalRef(env, ia_class);
+			inet_address_get_host_method = (*env)->GetMethodID(env, inet_address_class_global, "getHostAddress", "()Ljava/lang/String;");
+			(*env)->DeleteLocalRef(env, ia_class);
+		}
 
 		jclass fd_class = (*env)->FindClass(env, "java/io/FileDescriptor");
 		file_descriptor_class_global = (*env)->NewGlobalRef(env, fd_class);
@@ -278,6 +308,167 @@ JNIEXPORT jint JNICALL Java_com_wireguard_android_backend_TurnBackend_wgTurnProx
 JNIEXPORT void JNICALL Java_com_wireguard_android_backend_TurnBackend_wgNotifyNetworkChange(JNIEnv *env, jclass c)
 {
 	wgNotifyNetworkChange();
+}
+
+JNIEXPORT jstring JNICALL Java_com_wireguard_android_backend_TurnBackend_wgGetNetworkDnsServers(JNIEnv *env, jclass c, jlong network_handle)
+{
+	if (!current_network_global || !connectivity_manager_instance_global || !get_link_properties_method || !get_dns_servers_method || !inet_address_get_host_method)
+		return NULL;
+
+	// Find the Network object by handle
+	jobject target_network = NULL;
+	jobjectArray networks = (jobjectArray)(*env)->CallObjectMethod(env, connectivity_manager_instance_global, get_all_networks_method);
+	if (networks) {
+		jsize len = (*env)->GetArrayLength(env, networks);
+		for (jsize i = 0; i < len; i++) {
+			jobject network_obj = (*env)->GetObjectArrayElement(env, networks, i);
+			if (network_handle == (*env)->CallLongMethod(env, network_obj, get_network_handle_method)) {
+				target_network = network_obj;
+				break;
+			}
+			(*env)->DeleteLocalRef(env, network_obj);
+		}
+		(*env)->DeleteLocalRef(env, networks);
+	}
+	if (!target_network)
+		return NULL;
+
+	// Get LinkProperties
+	jobject link_props = (*env)->CallObjectMethod(env, connectivity_manager_instance_global, get_link_properties_method, target_network);
+	(*env)->DeleteLocalRef(env, target_network);
+	if (!link_props)
+		return NULL;
+
+	// Get DNS servers list
+	jobject dns_list = (*env)->CallObjectMethod(env, link_props, get_dns_servers_method);
+	(*env)->DeleteLocalRef(env, link_props);
+	if (!dns_list)
+		return NULL;
+
+	// Get List.size() and List.get() methods
+	jclass list_class = (*env)->GetObjectClass(env, dns_list);
+	jmethodID size_method = (*env)->GetMethodID(env, list_class, "size", "()I");
+	jmethodID get_method = (*env)->GetMethodID(env, list_class, "get", "(I)Ljava/lang/Object;");
+
+	jint count = (*env)->CallIntMethod(env, dns_list, size_method);
+	if (count <= 0) {
+		(*env)->DeleteLocalRef(env, list_class);
+		(*env)->DeleteLocalRef(env, dns_list);
+		return NULL;
+	}
+
+	// Build comma-separated string
+	char result[256] = {0};
+	int offset = 0;
+	for (jint i = 0; i < count && offset < (int)sizeof(result) - 16; i++) {
+		jobject inet_addr = (*env)->CallObjectMethod(env, dns_list, get_method, i);
+		if (inet_addr) {
+			jstring ip_str = (jstring)(*env)->CallObjectMethod(env, inet_addr, inet_address_get_host_method);
+			if (ip_str) {
+				const char *ip_cstr = (*env)->GetStringUTFChars(env, ip_str, 0);
+				if (offset > 0) result[offset++] = ',';
+				offset += snprintf(result + offset, sizeof(result) - offset, "%s", ip_cstr);
+				(*env)->ReleaseStringUTFChars(env, ip_str, ip_cstr);
+				(*env)->DeleteLocalRef(env, ip_str);
+			}
+			(*env)->DeleteLocalRef(env, inet_addr);
+		}
+	}
+
+	(*env)->DeleteLocalRef(env, list_class);
+	(*env)->DeleteLocalRef(env, dns_list);
+
+	if (offset == 0)
+		return NULL;
+
+	return (*env)->NewStringUTF(env, result);
+}
+
+// Called from Go to get system DNS servers for a given network handle.
+// Returns a malloc'd comma-separated string of DNS IPs, or NULL.
+const char* getNetworkDnsServers(long long network_handle)
+{
+	if (!connectivity_manager_instance_global || !get_link_properties_method || !get_dns_servers_method || !inet_address_get_host_method)
+		return NULL;
+
+	JNIEnv *env;
+	int attached = 0;
+	if ((*java_vm)->GetEnv(java_vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+		if ((*java_vm)->AttachCurrentThread(java_vm, &env, NULL) != JNI_OK)
+			return NULL;
+		attached = 1;
+	}
+
+	const char *result = NULL;
+
+	// Find the Network object by handle
+	jobject target_network = NULL;
+	jobjectArray networks = (jobjectArray)(*env)->CallObjectMethod(env, connectivity_manager_instance_global, get_all_networks_method);
+	if (networks) {
+		jsize len = (*env)->GetArrayLength(env, networks);
+		for (jsize i = 0; i < len; i++) {
+			jobject network_obj = (*env)->GetObjectArrayElement(env, networks, i);
+			if (network_handle == (*env)->CallLongMethod(env, network_obj, get_network_handle_method)) {
+				target_network = network_obj;
+				break;
+			}
+			(*env)->DeleteLocalRef(env, network_obj);
+		}
+		(*env)->DeleteLocalRef(env, networks);
+	}
+	if (!target_network) goto cleanup;
+
+	// Get LinkProperties
+	jobject link_props = (*env)->CallObjectMethod(env, connectivity_manager_instance_global, get_link_properties_method, target_network);
+	(*env)->DeleteLocalRef(env, target_network);
+	if (!link_props) goto cleanup;
+
+	// Get DNS servers list
+	jobject dns_list = (jobject)(*env)->CallObjectMethod(env, link_props, get_dns_servers_method);
+	(*env)->DeleteLocalRef(env, link_props);
+	if (!dns_list) goto cleanup;
+
+	// Get List.size() and List.get() methods
+	jclass list_class = (*env)->GetObjectClass(env, dns_list);
+	jmethodID size_method = (*env)->GetMethodID(env, list_class, "size", "()I");
+	jmethodID get_method = (*env)->GetMethodID(env, list_class, "get", "(I)Ljava/lang/Object;");
+
+	jint count = (*env)->CallIntMethod(env, dns_list, size_method);
+	if (count <= 0) {
+		(*env)->DeleteLocalRef(env, list_class);
+		(*env)->DeleteLocalRef(env, dns_list);
+		goto cleanup;
+	}
+
+	// Build comma-separated string
+	char buf[256] = {0};
+	int offset = 0;
+	for (jint i = 0; i < count && offset < (int)sizeof(buf) - 16; i++) {
+		jobject inet_addr = (*env)->CallObjectMethod(env, dns_list, get_method, i);
+		if (inet_addr) {
+			jstring ip_str = (jstring)(*env)->CallObjectMethod(env, inet_addr, inet_address_get_host_method);
+			if (ip_str) {
+				const char *ip_cstr = (*env)->GetStringUTFChars(env, ip_str, 0);
+				if (offset > 0) buf[offset++] = ',';
+				offset += snprintf(buf + offset, sizeof(buf) - offset, "%s", ip_cstr);
+				(*env)->ReleaseStringUTFChars(env, ip_str, ip_cstr);
+				(*env)->DeleteLocalRef(env, ip_str);
+			}
+			(*env)->DeleteLocalRef(env, inet_addr);
+		}
+	}
+
+	(*env)->DeleteLocalRef(env, list_class);
+	(*env)->DeleteLocalRef(env, dns_list);
+
+	if (offset > 0) {
+		result = strdup(buf);
+	}
+
+cleanup:
+	if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+	if (attached) (*java_vm)->DetachCurrentThread(java_vm);
+	return result;
 }
 
 JNIEXPORT void JNICALL Java_com_wireguard_android_backend_TurnBackend_wgTurnProxyStop(JNIEnv *env, jclass c)

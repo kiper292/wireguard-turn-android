@@ -57,7 +57,7 @@ type DNSServer struct {
 }
 
 // Predefined ordered list of DNS servers (Yandex + Google: plain, doh, dot)
-var dnsServers = []DNSServer{
+var dnsServersPredefined = []DNSServer{
 	{Type: DNSPlain, IP: yandexIP, Domain: ""},
 	{Type: DNSDoH, IP: yandexIP, Domain: yandexDomain},
 	{Type: DNSPlain, IP: googleIP, Domain: ""},
@@ -65,6 +65,11 @@ var dnsServers = []DNSServer{
 	{Type: DNSDoH, IP: googleIP, Domain: googleDomain},
 	//{Type: DNSDoT, IP: googleIP, Domain: googleDomain},
 }
+
+// dnsServers is the active list used during resolution.
+// It is initialized in init() to dnsServersPredefined,
+// or replaced by InitSystemDns() with system DNS prepended.
+var dnsServers []DNSServer
 
 // lastSuccessfulIndex stores the index of the last successful DNS server
 var (
@@ -377,14 +382,20 @@ func parseDNSResponse(response []byte, domain string) (string, error) {
 
 	// Read answers
 	for i := 0; i < int(ansCount) && offset < len(response); i++ {
-		// Skip name (may have compression)
+		// Skip name (may have compression pointer)
+		nameSkipped := false
 		for offset < len(response) && response[offset] != 0 {
 			labelLen := int(response[offset])
 			if labelLen > 63 {
-				offset += 2 // Compression pointer
+				offset += 2 // Compression pointer (2 bytes)
+				nameSkipped = true
 				break
 			}
 			offset += labelLen + 1
+		}
+		// Skip null terminator only if name wasn't a compression pointer
+		if !nameSkipped && offset < len(response) && response[offset] == 0 {
+			offset++
 		}
 		if offset >= len(response)-10 {
 			break
@@ -438,4 +449,25 @@ func ClearCache() {
 	lastSuccessfulIndex = 0
 	lastSuccessfulMu.Unlock()
 	turnLog("[DNS] Cache cleared")
+}
+
+// init initializes dnsServers to predefined list if InitSystemDns was not called
+func init() {
+	dnsServers = dnsServersPredefined
+}
+
+// InitSystemDns sets up the active DNS server list by prepending the given
+// system DNS servers to the predefined list (Yandex + Google).
+// It should be called once at proxy startup.
+func InitSystemDns(servers []string) {
+	var systemDns []DNSServer
+	for _, ip := range servers {
+		systemDns = append(systemDns, DNSServer{
+			Type: DNSPlain,
+			IP:   ip,
+		})
+	}
+	dnsServers = append(systemDns, dnsServersPredefined...)
+	turnLog("[DNS] Initialized: %d system + %d predefined = %d total",
+		len(systemDns), len(dnsServersPredefined), len(dnsServers))
 }

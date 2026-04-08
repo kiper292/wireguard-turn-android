@@ -7,8 +7,10 @@
 package main
 
 /*
+#include <stdlib.h>
 #include <android/log.h>
 extern int wgProtectSocket(int fd);
+extern const char* getNetworkDnsServers(long long network_handle);
 */
 import "C"
 
@@ -24,6 +26,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/cbeuw/connutil"
 	"github.com/google/uuid"
@@ -441,6 +444,16 @@ var globalGetCreds getCredsFunc
 func wgTurnProxyStart(peerAddrC *C.char, vklinkC *C.char, modeC *C.char, n C.int, udp C.int, listenAddrC *C.char, turnIpC *C.char, turnPortC C.int, peerTypeC *C.char, streamsPerCredC C.int, watchdogTimeoutC C.int, networkHandleC C.longlong) int32 {
 	// Force initialization of resolver and HTTP client with current environment
 	wgNotifyNetworkChange()
+
+	// Initialize system DNS from the current network (fallback to predefined Yandex/Google)
+	if networkHandleC != 0 {
+		if dnsStr := C.getNetworkDnsServers(C.longlong(networkHandleC)); dnsStr != nil {
+			dnsGo := C.GoString(dnsStr)
+			C.free(unsafe.Pointer(dnsStr))
+			servers := strings.Split(dnsGo, ",")
+			InitSystemDns(servers)
+		}
+	}
 
 	peerAddr := C.GoString(peerAddrC)
 	vklink := C.GoString(vklinkC)

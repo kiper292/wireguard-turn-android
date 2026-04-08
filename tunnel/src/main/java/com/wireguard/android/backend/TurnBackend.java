@@ -154,6 +154,7 @@ public final class TurnBackend {
     );
     public static native void wgTurnProxyStop();
     public static native void wgNotifyNetworkChange();
+    public static native String wgGetNetworkDnsServers(long networkHandle);
 
     private static final String TAG = "WireGuard/TurnBackend";
 }

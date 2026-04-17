@@ -30,7 +30,6 @@ import (
 
 	fhttp "github.com/bogdanfinn/fhttp"
 	tlsclient "github.com/bogdanfinn/tls-client"
-	"github.com/bogdanfinn/tls-client/profiles"
 )
 
 // VkCaptchaError represents a VK captcha error
@@ -267,16 +266,8 @@ type CaptchaTlsClientSolver struct {
 	profile Profile
 }
 
-// NewCaptchaTlsClientSolver creates a new captcha solver with tlsclient
-func NewCaptchaTlsClientSolver() (*CaptchaTlsClientSolver, error) {
-	client, err := tlsclient.NewHttpClient(
-		tlsclient.NewNoopLogger(),
-		tlsclient.WithTimeoutSeconds(20),
-		tlsclient.WithClientProfile(profiles.Chrome_146),
-	)
-	if err != nil {
-		return nil, err
-	}
+// NewCaptchaTlsClientSolver creates a new captcha solver with provided tlsclient
+func NewCaptchaTlsClientSolver(client tlsclient.HttpClient) (*CaptchaTlsClientSolver, error) {
 	return &CaptchaTlsClientSolver{
 		client:  client,
 		profile: getRandomProfile(),

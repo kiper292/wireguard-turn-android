@@ -8,18 +8,19 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
 	"net"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	fhttp "github.com/bogdanfinn/fhttp"
+	tlsclient "github.com/bogdanfinn/tls-client"
+	"github.com/bogdanfinn/tls-client/profiles"
 	"github.com/google/uuid"
 )
 
@@ -45,29 +46,39 @@ func vkDelayRandom(minMs, maxMs int) {
 
 // fetchVkCreds performs the actual VK/OK API calls to fetch credentials
 func fetchVkCreds(ctx context.Context, link string) (string, string, string, error) {
+	customDialer := net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control:   protectControl,
+	}
+
+	client, err := tlsclient.NewHttpClient(
+		tlsclient.NewNoopLogger(),
+		tlsclient.WithTimeoutSeconds(20),
+		tlsclient.WithClientProfile(profiles.Chrome_146),
+		tlsclient.WithDialer(customDialer),
+	)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to create tlsclient: %w", err)
+	}
+	defer client.CloseIdleConnections()
+
 	var lastErr error
-
-	// Try each credentials pair until success
 	for _, creds := range vkCredentialsList {
-		user, pass, addr, err := getTokenChain(ctx, link, creds)
-
+		user, pass, addr, err := getTokenChain(ctx, link, creds, client)
 		if err == nil {
 			return user, pass, addr, nil
 		}
-
 		lastErr = err
-
-		// Check if it's a rate limit error - wait and try next credentials
 		if strings.Contains(err.Error(), "error_code:29") || strings.Contains(err.Error(), "Rate limit") {
 			turnLog("[VK Auth] Rate limit detected, trying next credentials...")
 		}
 	}
-
 	return "", "", "", fmt.Errorf("all VK credentials failed: %w", lastErr)
 }
 
 // getTokenChain performs the VK/OK API token chain with given credentials
-func getTokenChain(ctx context.Context, link string, creds VKCredentials) (string, string, string, error) {
+func getTokenChain(ctx context.Context, link string, creds VKCredentials, client tlsclient.HttpClient) (string, string, string, error) {
 
 	doRequest := func(data string, requestURL string) (resp map[string]interface{}, err error) {
 		parsedURL, err := url.Parse(requestURL)
@@ -90,7 +101,7 @@ func getTokenChain(ctx context.Context, link string, creds VKCredentials) (strin
 			ipURL += "?" + parsedURL.RawQuery
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "POST", ipURL, bytes.NewBuffer([]byte(data)))
+		req, err := fhttp.NewRequestWithContext(ctx, "POST", ipURL, bytes.NewBuffer([]byte(data)))
 		if err != nil {
 			return nil, err
 		}
@@ -111,20 +122,6 @@ func getTokenChain(ctx context.Context, link string, creds VKCredentials) (strin
 		req.Header.Set("Sec-Fetch-Dest", "empty")
 		req.Header.Set("DNT", "1")
 		req.Header.Set("Priority", "u=1, i")
-
-		client := &http.Client{
-			Timeout: 20 * time.Second,
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout:   30 * time.Second,
-					KeepAlive: 30 * time.Second,
-					Control:   protectControl,
-				}).DialContext,
-				TLSClientConfig: &tls.Config{
-					ServerName: domain,
-				},
-			},
-		}
 
 		httpResp, err := client.Do(req)
 		if err != nil {
@@ -196,7 +193,7 @@ func getTokenChain(ctx context.Context, link string, creds VKCredentials) (strin
 			turnLog("[VK Auth] Token 2: Captcha detected, solving...")
 
 			// Try tlsclient-based captcha solving first
-			solver, err := NewCaptchaTlsClientSolver()
+			solver, err := NewCaptchaTlsClientSolver(client)
 			if err == nil {
 				defer solver.Close()
 				successToken, solveErr = solver.Solve(ctx, captchaErr)

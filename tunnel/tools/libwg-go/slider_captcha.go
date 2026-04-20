@@ -19,7 +19,7 @@ import (
 	"time"
 
 	fhttp "github.com/bogdanfinn/fhttp"
-	tlsclient "github.com/bogdanfinn/tls-client"
+	tlsclient "github.com/kiper292/tls-client"
 )
 
 const (

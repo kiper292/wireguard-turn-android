@@ -19,8 +19,8 @@ import (
 	"time"
 
 	fhttp "github.com/bogdanfinn/fhttp"
-	tlsclient "github.com/bogdanfinn/tls-client"
-	"github.com/bogdanfinn/tls-client/profiles"
+	tlsclient "github.com/kiper292/tls-client"
+	"github.com/kiper292/tls-client/profiles"
 	"github.com/google/uuid"
 )
 
@@ -52,12 +52,37 @@ func fetchVkCreds(ctx context.Context, link string) (string, string, string, err
 		Control:   protectControl,
 	}
 
+	// Custom dial context that resolves domains via DNS cache before TLS connection
+	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			host = addr
+		}
+
+		// Resolve domain via DNS cache for VPN bypass
+		resolvedIP, err := hostCache.Resolve(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("DNS resolution failed for %s: %w", host, err)
+		}
+
+		// Dial to resolved IP with protection
+		dialer := &net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			Control:  protectControl,
+		}
+		return dialer.DialContext(ctx, network, resolvedIP+":443")
+	}
+
 	client, err := tlsclient.NewHttpClient(
 		tlsclient.NewNoopLogger(),
 		tlsclient.WithTimeoutSeconds(20),
 		tlsclient.WithClientProfile(profiles.Chrome_146),
 		tlsclient.WithDialer(customDialer),
+		tlsclient.WithDialContext(dialContext),
 	)
+	
+	
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to create tlsclient: %w", err)
 	}
@@ -94,25 +119,13 @@ func getTokenChain(ctx context.Context, link string, creds VKCredentials, client
 		}
 
 		domain := parsedURL.Hostname()
-		resolvedIP, err := hostCache.Resolve(ctx, domain)
-		if err != nil {
-			return nil, fmt.Errorf("DNS resolution failed for %s: %w", domain, err)
-		}
 
-		port := parsedURL.Port()
-		if port == "" {
-			port = "443"
-		}
-		ipURL := "https://" + resolvedIP + ":" + port + parsedURL.Path
-		if parsedURL.RawQuery != "" {
-			ipURL += "?" + parsedURL.RawQuery
-		}
-
-		req, err := fhttp.NewRequestWithContext(ctx, "POST", ipURL, bytes.NewBuffer([]byte(data)))
+		req, err := fhttp.NewRequestWithContext(ctx, "POST", requestURL, bytes.NewBuffer([]byte(data)))
 		if err != nil {
 			return nil, err
 		}
 
+		// Set Host header for proper SNI in TLS handshake (dialContext handles DNS resolution)
 		req.Host = domain
 		req.Header.Set("User-Agent", profile.UserAgent)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

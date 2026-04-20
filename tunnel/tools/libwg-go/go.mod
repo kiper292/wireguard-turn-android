@@ -4,10 +4,11 @@ go 1.25
 
 require (
 	github.com/bogdanfinn/fhttp v0.6.8
-	github.com/bogdanfinn/tls-client v1.14.0
 	github.com/cbeuw/connutil v1.0.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	//github.com/bogdanfinn/tls-client v1.14.0
+	github.com/kiper292/tls-client v1.14.1
 	github.com/pion/dtls/v3 v3.0.10
 	github.com/pion/logging v0.2.4
 	github.com/pion/turn/v5 v5.0.2
@@ -34,3 +35,5 @@ require (
 	golang.org/x/text v0.32.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 )
+
+replace github.com/bogdanfinn/tls-client v1.14.0 => github.com/kiper292/tls-client v1.14.1

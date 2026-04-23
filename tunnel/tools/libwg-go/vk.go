@@ -53,11 +53,7 @@ const (
 	captchaSolveModeManual
 )
 
-func captchaSolveModeForAttempt(attempt int, manualOnly bool, enableSliderPOC bool) (captchaSolveMode, bool) {
-	if manualOnly {
-		return captchaSolveModeManual, attempt == 0
-	}
-
+func captchaSolveModeForAttempt(attempt int, manualCaptcha bool, enableSliderPOC bool) (captchaSolveMode, bool) {
 	switch attempt {
 	case 0:
 		return captchaSolveModeAuto, true
@@ -65,9 +61,8 @@ func captchaSolveModeForAttempt(attempt int, manualOnly bool, enableSliderPOC bo
 		if enableSliderPOC {
 			return captchaSolveModeSliderPOC, true
 		}
-		return captchaSolveModeManual, true
 	case 2:
-		if enableSliderPOC {
+		if manualCaptcha {
 			return captchaSolveModeManual, true
 		}
 	}
@@ -288,6 +283,7 @@ func getTokenChain(ctx context.Context, link string, creds VKCredentials, client
 
 				switch solveMode {
 				case captchaSolveModeAuto:
+					turnLog("[Captcha] Attempt 1. Try auto solving...")
 					if captchaErr.SessionToken != "" && captchaErr.RedirectURI != "" {
 						successToken, solveErr = solveVkCaptcha(ctx, captchaErr, streamID, client, profile, false)
 						if solveErr != nil {
@@ -297,6 +293,7 @@ func getTokenChain(ctx context.Context, link string, creds VKCredentials, client
 						solveErr = fmt.Errorf("missing fields for auto solve")
 					}
 				case captchaSolveModeSliderPOC:
+					turnLog("[Captcha] Attempt 2. Try slider solving...")
 					if captchaErr.SessionToken != "" && captchaErr.RedirectURI != "" {
 						successToken, solveErr = solveVkCaptcha(ctx, captchaErr, streamID, client, profile, true)
 						if solveErr != nil {
@@ -309,6 +306,7 @@ func getTokenChain(ctx context.Context, link string, creds VKCredentials, client
 					turnLog("[STREAM %d] [Captcha] Triggering manual captcha fallback...", streamID)
 				
 					// Step 2: Fall back to WebView
+					turnLog("[Captcha] Attempt 3. Web view solving...")
 					turnLog("[Captcha] Opening WebView for manual solving...")
 					redirectURICStr := C.CString(captchaErr.RedirectURI)
 					defer C.free(unsafe.Pointer(redirectURICStr))

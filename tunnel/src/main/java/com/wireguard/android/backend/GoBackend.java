@@ -205,6 +205,51 @@ public final class GoBackend implements Backend {
     }
 
     /**
+     * Starts and registers {@link VpnService} without creating the WireGuard tunnel yet.
+     *
+     * TURN uses this service for {@link android.net.VpnService#protect(int)} before the
+     * userspace tunnel is brought up.
+     */
+    public VpnService ensureVpnServiceReady() throws Exception {
+        if (VpnService.prepare(context) != null)
+            throw new BackendException(Reason.VPN_NOT_AUTHORIZED);
+
+        if (!vpnService.isDone()) {
+            Log.d(TAG, "Requesting to start VpnService");
+            context.startService(new Intent(context, VpnService.class));
+        }
+
+        final VpnService service;
+        try {
+            service = vpnService.get(2, TimeUnit.SECONDS);
+        } catch (final TimeoutException e) {
+            final Exception be = new BackendException(Reason.UNABLE_TO_START_VPN);
+            be.initCause(e);
+            throw be;
+        }
+        service.setOwner(this);
+        return service;
+    }
+
+    /**
+     * Stops {@link VpnService} when it was only prepared for TURN startup and no tunnel was
+     * successfully activated.
+     */
+    public void stopVpnServiceIfIdle() {
+        if (currentTunnelHandle != -1)
+            return;
+        try {
+            vpnService.get(0, TimeUnit.NANOSECONDS).stopSelf();
+        } catch (final TimeoutException ignored) {
+        } catch (final ExecutionException e) {
+            Log.w(TAG, "Unable to stop idle VpnService", e);
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.w(TAG, "Interrupted while stopping idle VpnService", e);
+        }
+    }
+
+    /**
      * Change the state of a given {@link Tunnel}, optionally applying a given {@link Config}.
      *
      * @param tunnel The tunnel to control the state of.
@@ -247,24 +292,7 @@ public final class GoBackend implements Backend {
         if (state == State.UP) {
             if (config == null)
                 throw new BackendException(Reason.TUNNEL_MISSING_CONFIG);
-
-            if (VpnService.prepare(context) != null)
-                throw new BackendException(Reason.VPN_NOT_AUTHORIZED);
-
-            final VpnService service;
-            if (!vpnService.isDone()) {
-                Log.d(TAG, "Requesting to start VpnService");
-                context.startService(new Intent(context, VpnService.class));
-            }
-
-            try {
-                service = vpnService.get(2, TimeUnit.SECONDS);
-            } catch (final TimeoutException e) {
-                final Exception be = new BackendException(Reason.UNABLE_TO_START_VPN);
-                be.initCause(e);
-                throw be;
-            }
-            service.setOwner(this);
+            final VpnService service = ensureVpnServiceReady();
 
             if (currentTunnelHandle != -1) {
                 Log.w(TAG, "Tunnel already up");
@@ -350,11 +378,6 @@ public final class GoBackend implements Backend {
             // Protect WireGuard sockets
             service.protect(wgGetSocketV4(currentTunnelHandle));
             service.protect(wgGetSocketV6(currentTunnelHandle));
-
-            // NEW: Start TURN proxy AFTER tunnel is established
-            // This ensures VpnService.protect() will work for TURN sockets
-            // TurnProxyManager will be called from UI module via callback
-            Log.d(TAG, "Tunnel established, TURN proxy should be started now");
         } else {
             if (currentTunnelHandle == -1) {
                 Log.w(TAG, "Tunnel already down");

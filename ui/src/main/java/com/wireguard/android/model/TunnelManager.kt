@@ -18,11 +18,13 @@ import com.wireguard.android.Application.Companion.getTunnelManager
 import com.wireguard.android.Application.Companion.getTurnProxyManager
 import com.wireguard.android.BR
 import com.wireguard.android.R
+import com.wireguard.android.backend.GoBackend
 import com.wireguard.android.backend.Statistics
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.android.configStore.ConfigStore
 import com.wireguard.android.databinding.ObservableSortedKeyedArrayList
 import com.wireguard.android.turn.TurnConfigProcessor
+import com.wireguard.android.turn.TurnProxyManager
 import com.wireguard.android.turn.TurnSettings
 import com.wireguard.android.turn.TurnSettingsStore
 import com.wireguard.android.util.ErrorMessages
@@ -274,19 +276,30 @@ class TunnelManager(
         var newState = tunnel.state
         var throwable: Throwable? = null
         try {
+            val backend = getBackend()
             var configToUse = tunnel.getConfigAsync()
             val turn = tunnel.turnSettings
             val turnEnabled = turn != null && turn.enabled
             
-            // Determine if TURN should be started after tunnel is established
+            // Determine if TURN should be started before WireGuard activation.
             // This happens when explicitly requesting UP, or TOGGLE from DOWN state
             val shouldStartTurn = state == Tunnel.State.UP || (state == Tunnel.State.TOGGLE && tunnel.state == Tunnel.State.DOWN)
             
             // Stop TURN when tunnel goes DOWN
             val shouldStopTurn = state == Tunnel.State.DOWN || (state == Tunnel.State.TOGGLE && tunnel.state == Tunnel.State.UP)
 
+            suspend fun cleanupFailedTurnStartup(goBackend: GoBackend) {
+                withContext(Dispatchers.IO) {
+                    getTurnProxyManager().stopForTunnel(tunnel.name)
+                    goBackend.stopVpnServiceIfIdle()
+                }
+            }
+
             if (turnEnabled) {
                 if (shouldStartTurn) {
+                    tunnelMap
+                        .filter { it !== tunnel && it.state == Tunnel.State.UP }
+                        .forEach { activeTunnel -> setTunnelState(activeTunnel, Tunnel.State.DOWN) }
                     configToUse = TurnConfigProcessor.modifyConfigForActiveTurn(configToUse, turn)
                 } else if (shouldStopTurn) {
                     withContext(Dispatchers.IO) {
@@ -295,22 +308,32 @@ class TunnelManager(
                 }
             }
 
-            newState = withContext(Dispatchers.IO) { getBackend().setState(tunnel, state, configToUse) }
+            if (shouldStartTurn && turnEnabled) {
+                val goBackend = backend as? GoBackend
+                    ?: throw IllegalStateException("TURN startup requires the Go backend")
 
-            // NEW: Start TURN AFTER tunnel is established
-            // This ensures VpnService.protect() will work for TURN sockets
-            if (shouldStartTurn && newState == Tunnel.State.UP) {
-                if (turnEnabled) {
-                    Log.d(TAG, "Tunnel established, starting TURN proxy...")
-                    val turnStarted = withContext(Dispatchers.IO) {
-                        getTurnProxyManager().onTunnelEstablished(tunnel.name, turn)
+                withContext(Dispatchers.IO) { goBackend.ensureVpnServiceReady() }
+
+                when (val turnResult = withContext(Dispatchers.IO) {
+                    getTurnProxyManager().onTunnelEstablished(tunnel.name, turn)
+                }) {
+                    TurnProxyManager.TurnStartResult.Success -> {
+                        try {
+                            newState = withContext(Dispatchers.IO) {
+                                backend.setState(tunnel, state, configToUse)
+                            }
+                        } catch (e: Throwable) {
+                            cleanupFailedTurnStartup(goBackend)
+                            throw e
+                        }
                     }
-                    if (!turnStarted) {
-                        Log.w(TAG, "TURN proxy start returned false, but tunnel is up")
+                    is TurnProxyManager.TurnStartResult.Failure -> {
+                        cleanupFailedTurnStartup(goBackend)
+                        throw IllegalStateException(turnResult.message)
                     }
-                } else {
-                    Log.w(TAG, "TURN not enabled for tunnel ${tunnel.name}, skipping")
                 }
+            } else {
+                newState = withContext(Dispatchers.IO) { backend.setState(tunnel, state, configToUse) }
             }
 
             if (newState == Tunnel.State.UP) {

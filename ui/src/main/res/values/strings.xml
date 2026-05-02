@@ -285,7 +285,7 @@
     <string name="turn_vk_link">VK Calls link</string>
     <string name="turn_vk_link_hint">https://vk.ru/call/join/...</string>
     <string name="turn_streams">Streams (-n)</string>
-    <string name="turn_streams_hint">1-16 (default 4)</string>
+    <string name="turn_streams_hint">≥1 (default 4)</string>
     <string name="turn_local_port">Local port</string>
     <string name="turn_local_port_hint">1024-65535 (default 9000)</string>
     <string name="turn_use_udp">Use UDP</string>
@@ -297,7 +297,7 @@
     <string name="turn_watchdog_timeout">Watchdog timeout</string>
     <string name="turn_watchdog_timeout_hint">0=disabled, ≥5 sec</string>
     <string name="turn_streams_per_cred">Streams per credentials</string>
-    <string name="turn_streams_per_cred_hint">1-16 (default 4)</string>
+    <string name="turn_streams_per_cred_hint">≥1 (default 4)</string>
     <string name="captcha_title">Verify You Are Human</string>
     <string name="captcha_loading">Loading captcha…</string>
     <string name="captcha_error">Failed to solve captcha. Please try again.</string>

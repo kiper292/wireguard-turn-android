@@ -47,6 +47,8 @@ class TurnSettingsStore(private val context: Context) {
                     turnPort = json.optInt("turnPort", 0),
                     peerType = json.optString("peerType", peerTypeDefault),
                     streamsPerCred = json.optInt("streamsPerCred", 4),
+                    watchdogTimeout = json.optInt("watchdogTimeout", 0),
+                    wrapKey = json.optString("wrapKey", ""),
                 )
                 settings
             }
@@ -77,6 +79,8 @@ class TurnSettingsStore(private val context: Context) {
             .put("turnPort", settings.turnPort)
             .put("peerType", settings.peerType)
             .put("streamsPerCred", settings.streamsPerCred)
+            .put("watchdogTimeout", settings.watchdogTimeout)
+            .put("wrapKey", settings.wrapKey)
 
         file.parentFile?.mkdirs()
         FileOutputStream(file, false).use { stream ->
@@ -107,4 +111,3 @@ class TurnSettingsStore(private val context: Context) {
         private const val TAG = "WireGuard/TurnSettingsStore"
     }
 }
-

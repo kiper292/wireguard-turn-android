@@ -57,7 +57,7 @@ AllowedIPs = 0.0.0.0/0
 #@wgt:IPPort = 1.2.3.4:56000
 #@wgt:VKLink = https://vk.com/call/join/...
 #@wgt:Mode = vk_link              # Auth mode: vk_link or wb
-#@wgt:PeerType = proxy_v2          # proxy_v2 | proxy_v1 | wireguard
+#@wgt:PeerType = turncoat_v3       # turncoat_v3 | proxy_v2 | proxy_v1 | wireguard
 #@wgt:StreamNum = 4
 #@wgt:LocalPort = 9000
 #@wgt:StreamsPerCred = 4           # Streams per credentials cache
@@ -66,9 +66,11 @@ AllowedIPs = 0.0.0.0/0
 #@wgt:TurnIP = 155.212.199.166      # Override TURN server IP
 #@wgt:TurnPort = 19302              # Override TURN server port
 #@wgt:WatchdogTimeout = 30          # Inactivity timeout (sec, 0=disabled)
+#@wgt:WrapKey = <64-hex-key>        # TURNcoat v3 WRAP/WARP key (empty=off)
 ```
 
 **Note:** The `PeerType` parameter determines the operating mode:
+- `turncoat_v3` — TURNcoat v3: DTLS + 19-byte Session ID handshake, compatible with the `TURNcoat` `v3` branch server
 - `proxy_v2` (default) — DTLS with Session ID transmission for stream aggregation (server: [kiper292/vk-turn-proxy](https://github.com/kiper292/vk-turn-proxy))
 - `proxy_v1` — DTLS without Session ID handshake (server: [cacggghp/vk-turn-proxy](https://github.com/cacggghp/vk-turn-proxy))
 - `wireguard` — no DTLS, direct relay (NoDTLS, for debugging or direct connection)
@@ -76,7 +78,9 @@ AllowedIPs = 0.0.0.0/0
 **Watchdog Timeout:** The `WatchdogTimeout` parameter enables inactivity monitoring for DTLS mode:
 - `0` (default) — watchdog disabled
 - `≥5` — timeout in seconds; if no packets are received from the TURN server within this time, the connection is re-established
-- Applies only to `proxy_v2` and `proxy_v1` modes
+- Applies only to `turncoat_v3`, `proxy_v2`, and `proxy_v1` modes
+
+**WRAP/WARP:** The `WrapKey` parameter enables ChaCha20 DTLS-packet obfuscation for TURNcoat `v3`. It must match the server `-wrap-key`; leave it empty for legacy behavior.
 
 For more technical details, see [info/TURN_INTEGRATION_DETAILS.md](info/TURN_INTEGRATION_DETAILS.md).
 

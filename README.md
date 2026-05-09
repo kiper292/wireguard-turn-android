@@ -59,7 +59,7 @@ AllowedIPs = 0.0.0.0/0
 #@wgt:IPPort = 1.2.3.4:56000
 #@wgt:VKLink = https://vk.com/call/join/...
 #@wgt:Mode = vk_link              # Режим авторизации: vk_link или wb
-#@wgt:PeerType = proxy_v2          # proxy_v2 | proxy_v1 | wireguard
+#@wgt:PeerType = turncoat_v3       # turncoat_v3 | proxy_v2 | proxy_v1 | wireguard
 #@wgt:StreamNum = 4
 #@wgt:LocalPort = 9000
 #@wgt:StreamsPerCred = 4           # Потоков на один кэш credentials
@@ -68,9 +68,11 @@ AllowedIPs = 0.0.0.0/0
 #@wgt:TurnIP = 155.212.199.166      # Переопределить IP TURN сервера
 #@wgt:TurnPort = 19302              # Переопределить порт TURN сервера
 #@wgt:WatchdogTimeout = 30          # Таймаут неактивности (сек, 0=отключен)
+#@wgt:WrapKey = <64-hex-key>        # WRAP/WARP ключ TURNcoat v3 (пусто=отключено)
 ```
 
 **Примечание:** Параметр `PeerType` определяет режим работы:
+- `turncoat_v3` — TURNcoat v3: DTLS + 19-byte Session ID handshake, совместим с сервером `TURNcoat` ветки `v3`
 - `proxy_v2` (по умолчанию) — DTLS с передачей Session ID для агрегации потоков (сервер: [kiper292/vk-turn-proxy](https://github.com/kiper292/vk-turn-proxy))
 - `proxy_v1` — DTLS без Session ID handshake (сервер: [cacggghp/vk-turn-proxy](https://github.com/cacggghp/vk-turn-proxy))
 - `wireguard` — без DTLS, прямой relay (NoDTLS, для отладки или прямого подключения)
@@ -78,7 +80,9 @@ AllowedIPs = 0.0.0.0/0
 **Watchdog Timeout:** Параметр `WatchdogTimeout` активирует контроль неактивности для DTLS режима:
 - `0` (по умолчанию) — watchdog отключен
 - `≥5` — таймаут в секундах; если пакеты не получаются от TURN сервера в течение указанного времени, соединение переподключается
-- Применяется только к режимам `proxy_v2` и `proxy_v1`
+
+**WRAP/WARP:** Параметр `WrapKey` включает ChaCha20-обфускацию DTLS-пакетов для TURNcoat `v3`. Ключ должен совпадать с `server -wrap-key`; пустое значение сохраняет старое поведение.
+- Применяется только к режимам `turncoat_v3`, `proxy_v2` и `proxy_v1`
 
 Для получения подробной технической информации см. [info/TURN_INTEGRATION_DETAILS.md](info/TURN_INTEGRATION_DETAILS.md).
 

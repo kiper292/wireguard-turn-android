@@ -535,6 +535,27 @@
                             </com.google.android.material.textfield.TextInputLayout>
 
                             <com.google.android.material.textfield.TextInputLayout
+                                android:id="@+id/turn_wrap_key_layout"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_margin="4dp"
+                                android:enabled="@{config.turn.enabled}"
+                                android:hint="@string/turn_wrap_key"
+                                app:expandedHintEnabled="false">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/turn_wrap_key_text"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:enabled="@{config.turn.enabled}"
+                                    android:hint="@string/turn_wrap_key_hint"
+                                    android:imeOptions="actionNext"
+                                    android:inputType="textNoSuggestions|textVisiblePassword"
+                                    android:maxLength="64"
+                                    android:text="@={config.turn.wrapKey}" />
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
                                 android:id="@+id/turn_local_port_layout"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"

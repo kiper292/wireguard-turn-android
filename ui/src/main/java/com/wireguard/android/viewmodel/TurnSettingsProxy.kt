@@ -84,6 +84,13 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
         }
 
     @get:Bindable
+    var wrapKey: String = ""
+        set(value) {
+            field = value
+            notifyPropertyChanged(BR.wrapKey)
+        }
+
+    @get:Bindable
     var peerType: String = "proxy_v2"
         set(value) {
             field = value
@@ -118,6 +125,7 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
         peerType = parcel.readString() ?: "proxy_v2"
         streamsPerCred = parcel.readString() ?: ""
         advancedExpanded = parcel.readInt() != 0
+        wrapKey = parcel.readString() ?: ""
     }
 
     constructor()
@@ -134,6 +142,7 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
             turnIp = other.turnIp
             turnPort = if (other.turnPort > 0) other.turnPort.toString() else ""
             watchdogTimeout = if (other.watchdogTimeout > 0) other.watchdogTimeout.toString() else ""
+            wrapKey = other.wrapKey
             peerType = other.peerType
             streamsPerCred = other.streamsPerCred.toString()
         }
@@ -155,6 +164,7 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
         dest.writeString(peerType)
         dest.writeString(streamsPerCred)
         dest.writeInt(if (advancedExpanded) 1 else 0)
+        dest.writeString(wrapKey)
     }
 
     @Throws(BadConfigException::class)
@@ -164,9 +174,10 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
         val parsedTurnPort = turnPort.toIntOrNull() ?: 0
         val parsedWatchdogTimeout = watchdogTimeout.toIntOrNull() ?: 0
         val parsedStreamsPerCred = streamsPerCred.toIntOrNull() ?: 4
+        val normalizedWrapKey = wrapKey.trim()
 
         if (enabled) {
-            if (parsedStreams !in 1..16) {
+            if (parsedStreams < 1) {
                 throw BadConfigException(BadConfigException.Section.INTERFACE, BadConfigException.Location.TOP_LEVEL, BadConfigException.Reason.INVALID_VALUE, streams)
             }
 
@@ -182,7 +193,11 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
                 throw BadConfigException(BadConfigException.Section.INTERFACE, BadConfigException.Location.TOP_LEVEL, BadConfigException.Reason.INVALID_VALUE, watchdogTimeout)
             }
 
-            if (parsedStreamsPerCred !in 1..16) {
+            if (normalizedWrapKey.isNotBlank() && !normalizedWrapKey.matches(Regex("^[0-9a-fA-F]{64}$"))) {
+                throw BadConfigException(BadConfigException.Section.INTERFACE, BadConfigException.Location.TOP_LEVEL, BadConfigException.Reason.INVALID_VALUE, wrapKey)
+            }
+
+            if (parsedStreamsPerCred < 1) {
                 throw BadConfigException(BadConfigException.Section.INTERFACE, BadConfigException.Location.TOP_LEVEL, BadConfigException.Reason.INVALID_VALUE, streamsPerCred)
             }
 
@@ -210,6 +225,7 @@ class TurnSettingsProxy : BaseObservable, Parcelable {
             peerType = peerType,
             streamsPerCred = parsedStreamsPerCred,
             watchdogTimeout = parsedWatchdogTimeout,
+            wrapKey = normalizedWrapKey,
         )
         if (enabled) {
             TurnSettings.validate(settings)

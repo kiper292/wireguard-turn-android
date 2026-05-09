@@ -4,6 +4,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 val pkg: String = providers.gradleProperty("wireguardPackageName").get()
+val targetAbi: String? = providers.gradleProperty("targetAbi").orNull
 
 plugins {
     alias(libs.plugins.android.application)
@@ -27,7 +28,7 @@ android {
         versionName = providers.gradleProperty("wireguardVersionName").get()
         buildConfigField("int", "MIN_SDK_VERSION", minSdk.toString())
         ndk {
-            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+            abiFilters.addAll(targetAbi?.let { listOf(it) } ?: listOf("armeabi-v7a", "arm64-v8a"))
         }
     }
     packaging {

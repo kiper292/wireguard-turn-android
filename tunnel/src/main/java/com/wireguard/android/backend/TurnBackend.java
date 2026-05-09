@@ -150,6 +150,7 @@ public final class TurnBackend {
             String peerType,
             int streamsPerCred,
             int watchdogTimeout,
+            String wrapKey,
             long networkHandle
     );
     public static native void wgTurnProxyStop();
